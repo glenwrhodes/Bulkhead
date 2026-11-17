@@ -11,8 +11,8 @@ Custom C++20 engine on DirectX 12 with DXR ray tracing (RTX 4090 Laptop GPU, ray
 |---|---|---|
 | 1 | CMake skeleton: D3D12 window, offscreen render target, headless capture to PNG, ctest | **Done (round 1)** |
 | 2 | Maze generator + unit tests + overhead map PNG + A* route | **Done (round 1)** |
-| 3 | Blender kit round 1: corridor pieces, room pieces, door frame + windowed sliding door, pipes, barrels, crates, handgun, exported to .glb | Next |
-| 4 | Build the maze from the kit; G-buffer raster + DXR shadows and AO; ceiling lights | |
+| 3 | Blender kit round 1: corridor pieces, room pieces, door frame + windowed sliding door, pipes, barrels, crates, handgun, exported to .glb | **Done (round 2)**: 23 pieces in `assets/`, see `art/blender/README.md` |
+| 4 | Build the maze from the kit; G-buffer raster + DXR shadows and AO; ceiling lights | Next |
 | 5 | First-person walking with capsule collision, doors that open, gun viewmodel, scripted walk-through capture | |
 | later | Creature model, rig and animation (Blender); grid-path AI with ray-query line of sight; shooting; pickups; exit win; RT reflections; audio; HUD | |
 

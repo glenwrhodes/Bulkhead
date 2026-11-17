@@ -1,0 +1,628 @@
+{
+  "units": "metres",
+  "up": "glTF +Y (Blender +Z)",
+  "north": "glTF -Z (Blender +Y)",
+  "cell_size": 4.0,
+  "corridor_width": 2.4,
+  "corridor_ceiling": 2.85,
+  "room_ceiling": 3.4,
+  "pieces": {
+    "corridor_straight": {
+      "file": "assets/corridor_straight.glb",
+      "category": "corridor",
+      "placement": "cell centre; open N+S (Blender +Y/-Y)",
+      "nodes": [
+        "corridor_straight_body",
+        "corridor_straight_detail",
+        "corridor_straight_decal",
+        "corridor_straight_pipes",
+        "corridor_straight_L0",
+        "corridor_straight_L1"
+      ],
+      "triangles": 42604,
+      "materials": [
+        "BH_AccentOrange",
+        "BH_Copper",
+        "BH_DarkSteel",
+        "BH_Gunmetal",
+        "BH_LightAmber",
+        "BH_LightGreen",
+        "BH_LightTeal",
+        "BH_LightWhite",
+        "BH_Paint",
+        "BH_PaintDark",
+        "BH_PanelDark",
+        "BH_PanelGrey",
+        "BH_PanelLight",
+        "BH_PanelWhite",
+        "BH_PipeBlue",
+        "BH_Recess",
+        "BH_Steel"
+      ],
+      "lights": 2,
+      "bytes": 1276108
+    },
+    "corridor_corner": {
+      "file": "assets/corridor_corner.glb",
+      "category": "corridor",
+      "placement": "cell centre; open N+E",
+      "nodes": [
+        "corridor_corner_body",
+        "corridor_corner_detail",
+        "corridor_corner_decal",
+        "corridor_corner_pipes",
+        "corridor_corner_L0"
+      ],
+      "triangles": 36625,
+      "materials": [
+        "BH_CableBlack",
+        "BH_CableBlue",
+        "BH_CableRed",
+        "BH_CableYellow",
+        "BH_Copper",
+        "BH_DarkSteel",
+        "BH_Gunmetal",
+        "BH_LightAmber",
+        "BH_LightGreen",
+        "BH_LightTeal",
+        "BH_LightWhite",
+        "BH_Paint",
+        "BH_PanelDark",
+        "BH_PanelGrey",
+        "BH_PanelLight",
+        "BH_PanelWhite",
+        "BH_PipeBlue",
+        "BH_Recess",
+        "BH_Steel"
+      ],
+      "lights": 1,
+      "bytes": 953704
+    },
+    "corridor_tee": {
+      "file": "assets/corridor_tee.glb",
+      "category": "corridor",
+      "placement": "cell centre; open N+E+S",
+      "nodes": [
+        "corridor_tee_body",
+        "corridor_tee_detail",
+        "corridor_tee_decal",
+        "corridor_tee_pipes",
+        "corridor_tee_L0"
+      ],
+      "triangles": 31154,
+      "materials": [
+        "BH_AccentOrange",
+        "BH_Copper",
+        "BH_DarkSteel",
+        "BH_Gunmetal",
+        "BH_LightAmber",
+        "BH_LightTeal",
+        "BH_LightWhite",
+        "BH_PaintDark",
+        "BH_PanelDark",
+        "BH_PanelGrey",
+        "BH_PanelLight",
+        "BH_PanelWhite",
+        "BH_PipeBlue",
+        "BH_Recess",
+        "BH_Steel"
+      ],
+      "lights": 1,
+      "bytes": 909184
+    },
+    "corridor_cross": {
+      "file": "assets/corridor_cross.glb",
+      "category": "corridor",
+      "placement": "cell centre; open N+E+S+W",
+      "nodes": [
+        "corridor_cross_body",
+        "corridor_cross_detail",
+        "corridor_cross_decal",
+        "corridor_cross_pipes",
+        "corridor_cross_L0"
+      ],
+      "triangles": 20060,
+      "materials": [
+        "BH_Copper",
+        "BH_DarkSteel",
+        "BH_Gunmetal",
+        "BH_LightAmber",
+        "BH_LightTeal",
+        "BH_LightWhite",
+        "BH_PanelDark",
+        "BH_PanelGrey",
+        "BH_PanelLight",
+        "BH_PanelWhite",
+        "BH_PipeBlue",
+        "BH_Recess"
+      ],
+      "lights": 1,
+      "bytes": 524232
+    },
+    "corridor_end": {
+      "file": "assets/corridor_end.glb",
+      "category": "corridor",
+      "placement": "cell centre; open N",
+      "nodes": [
+        "corridor_end_body",
+        "corridor_end_detail",
+        "corridor_end_decal",
+        "corridor_end_pipes",
+        "corridor_end_L0"
+      ],
+      "triangles": 43678,
+      "materials": [
+        "BH_AccentOrange",
+        "BH_CableBlack",
+        "BH_CableRed",
+        "BH_Copper",
+        "BH_DarkSteel",
+        "BH_Gunmetal",
+        "BH_HazardBlack",
+        "BH_HazardYellow",
+        "BH_LightAmber",
+        "BH_LightGreen",
+        "BH_LightRed",
+        "BH_LightTeal",
+        "BH_LightWhite",
+        "BH_PaintDark",
+        "BH_PaintYellow",
+        "BH_PanelDark",
+        "BH_PanelGrey",
+        "BH_PanelLight",
+        "BH_PanelWhite",
+        "BH_PipeBlue",
+        "BH_Recess",
+        "BH_Screen",
+        "BH_ScreenDim",
+        "BH_Steel"
+      ],
+      "lights": 1,
+      "bytes": 1238940
+    },
+    "door_frame": {
+      "file": "assets/door_frame.glb",
+      "category": "door",
+      "placement": "edge midpoint; passage along local Y",
+      "nodes": [
+        "door_frame_body",
+        "door_frame_detail",
+        "door_frame_decal"
+      ],
+      "triangles": 9218,
+      "materials": [
+        "BH_Gunmetal",
+        "BH_HazardBlack",
+        "BH_HazardYellow",
+        "BH_LightAmber",
+        "BH_LightGreen",
+        "BH_PaintDark",
+        "BH_PanelDark",
+        "BH_PanelGrey",
+        "BH_PanelLight",
+        "BH_Recess",
+        "BH_Screen",
+        "BH_Steel"
+      ],
+      "lights": 0,
+      "bytes": 287140
+    },
+    "door_sliding": {
+      "file": "assets/door_sliding.glb",
+      "category": "door",
+      "placement": "edge midpoint; animate LeafL along -X and LeafR along +X (0.8 m)",
+      "nodes": [
+        "door_sliding_LeafL",
+        "door_sliding_LeafL_detail",
+        "door_sliding_LeafL_glass",
+        "door_sliding_LeafR",
+        "door_sliding_LeafR_detail",
+        "door_sliding_LeafR_glass"
+      ],
+      "triangles": 5096,
+      "materials": [
+        "BH_AccentOrange",
+        "BH_Glass",
+        "BH_Gunmetal",
+        "BH_PaintDark",
+        "BH_PanelGrey",
+        "BH_PanelLight",
+        "BH_PanelWhite",
+        "BH_Recess",
+        "BH_Rubber"
+      ],
+      "lights": 0,
+      "bytes": 140432
+    },
+    "door_bulkhead": {
+      "file": "assets/door_bulkhead.glb",
+      "category": "door",
+      "placement": "edge midpoint; animate Leaf along +Z (2.4 m)",
+      "nodes": [
+        "door_bulkhead_Leaf",
+        "door_bulkhead_Leaf_detail",
+        "door_bulkhead_Leaf_glass"
+      ],
+      "triangles": 12170,
+      "materials": [
+        "BH_DarkSteel",
+        "BH_Gunmetal",
+        "BH_HazardBlack",
+        "BH_HazardYellow",
+        "BH_PaintDark",
+        "BH_PanelGrey",
+        "BH_PanelLight",
+        "BH_Steel"
+      ],
+      "lights": 0,
+      "bytes": 322748
+    },
+    "door_airlock": {
+      "file": "assets/door_airlock.glb",
+      "category": "door",
+      "placement": "edge midpoint; animate Leaf along +Z (2.4 m); exit door",
+      "nodes": [
+        "door_airlock_Leaf",
+        "door_airlock_Leaf_detail",
+        "door_airlock_Leaf_glass"
+      ],
+      "triangles": 12502,
+      "materials": [
+        "BH_DarkSteel",
+        "BH_Gunmetal",
+        "BH_HazardBlack",
+        "BH_LightRed",
+        "BH_Paint",
+        "BH_PanelGrey",
+        "BH_PipeRed",
+        "BH_Steel"
+      ],
+      "lights": 0,
+      "bytes": 335676
+    },
+    "room_floor": {
+      "file": "assets/room_floor.glb",
+      "category": "room",
+      "placement": "room cell centre",
+      "nodes": [
+        "room_floor_body",
+        "room_floor_detail"
+      ],
+      "triangles": 16032,
+      "materials": [
+        "BH_DarkSteel",
+        "BH_Gunmetal",
+        "BH_Recess",
+        "BH_Steel"
+      ],
+      "lights": 0,
+      "bytes": 391836
+    },
+    "room_ceiling": {
+      "file": "assets/room_ceiling.glb",
+      "category": "room",
+      "placement": "room cell centre",
+      "nodes": [
+        "room_ceiling_body",
+        "room_ceiling_detail",
+        "room_ceiling_L0"
+      ],
+      "triangles": 2902,
+      "materials": [
+        "BH_DarkSteel",
+        "BH_Gunmetal",
+        "BH_LightWhite",
+        "BH_PanelDark",
+        "BH_PanelGrey",
+        "BH_PanelLight",
+        "BH_Steel"
+      ],
+      "lights": 1,
+      "bytes": 81564
+    },
+    "room_wall_a": {
+      "file": "assets/room_wall_a.glb",
+      "category": "room",
+      "placement": "room cell centre; wall on the cell south edge facing north",
+      "nodes": [
+        "room_wall_a_body",
+        "room_wall_a_detail",
+        "room_wall_a_decal",
+        "room_wall_a_pipes"
+      ],
+      "triangles": 15721,
+      "materials": [
+        "BH_AccentOrange",
+        "BH_CrateGrey",
+        "BH_Gunmetal",
+        "BH_LightAmber",
+        "BH_LightGreen",
+        "BH_LightTeal",
+        "BH_PaintDark",
+        "BH_PanelDark",
+        "BH_PanelGrey",
+        "BH_PanelLight",
+        "BH_PanelWhite",
+        "BH_PipeYellow",
+        "BH_Recess",
+        "BH_Rubber",
+        "BH_Screen",
+        "BH_ScreenDim",
+        "BH_Steel"
+      ],
+      "lights": 0,
+      "bytes": 539040
+    },
+    "room_wall_b": {
+      "file": "assets/room_wall_b.glb",
+      "category": "room",
+      "placement": "room cell centre; wall on the cell south edge facing north",
+      "nodes": [
+        "room_wall_b_body",
+        "room_wall_b_detail",
+        "room_wall_b_decal",
+        "room_wall_b_pipes"
+      ],
+      "triangles": 20857,
+      "materials": [
+        "BH_AccentOrange",
+        "BH_DarkSteel",
+        "BH_Gunmetal",
+        "BH_HazardYellow",
+        "BH_LightGreen",
+        "BH_LightTeal",
+        "BH_Paint",
+        "BH_PaintDark",
+        "BH_PanelDark",
+        "BH_PanelGrey",
+        "BH_PanelLight",
+        "BH_PanelWhite",
+        "BH_PipeBlue",
+        "BH_PipeRed",
+        "BH_PipeYellow",
+        "BH_Steel"
+      ],
+      "lights": 0,
+      "bytes": 638172
+    },
+    "room_wall_door": {
+      "file": "assets/room_wall_door.glb",
+      "category": "room",
+      "placement": "room cell centre; south edge, doorway for door_frame",
+      "nodes": [
+        "room_wall_door_body",
+        "room_wall_door_detail",
+        "room_wall_door_decal",
+        "room_wall_door_pipes"
+      ],
+      "triangles": 4024,
+      "materials": [
+        "BH_Gunmetal",
+        "BH_LightTeal",
+        "BH_PaintDark",
+        "BH_PanelDark",
+        "BH_PanelGrey",
+        "BH_PanelLight",
+        "BH_PanelWhite",
+        "BH_PipeYellow",
+        "BH_Steel"
+      ],
+      "lights": 0,
+      "bytes": 147644
+    },
+    "room_corner": {
+      "file": "assets/room_corner.glb",
+      "category": "room",
+      "placement": "room cell centre; post at the south-west corner",
+      "nodes": [
+        "room_corner_body",
+        "room_corner_detail",
+        "room_corner_decal"
+      ],
+      "triangles": 594,
+      "materials": [
+        "BH_Gunmetal",
+        "BH_LightTeal",
+        "BH_PanelDark",
+        "BH_PanelGrey"
+      ],
+      "lights": 0,
+      "bytes": 20120
+    },
+    "crate_small": {
+      "file": "assets/crate_small.glb",
+      "category": "prop",
+      "placement": "floor, prop centre",
+      "nodes": [
+        "crate_small_body",
+        "crate_small_detail",
+        "crate_small_decal"
+      ],
+      "triangles": 4211,
+      "materials": [
+        "BH_CrateOlive",
+        "BH_DarkSteel",
+        "BH_Gunmetal",
+        "BH_Paint",
+        "BH_PaintDark",
+        "BH_PanelDark",
+        "BH_Rubber",
+        "BH_Steel"
+      ],
+      "lights": 0,
+      "bytes": 146248
+    },
+    "crate_medium": {
+      "file": "assets/crate_medium.glb",
+      "category": "prop",
+      "placement": "floor, prop centre",
+      "nodes": [
+        "crate_medium_body",
+        "crate_medium_detail",
+        "crate_medium_decal"
+      ],
+      "triangles": 6778,
+      "materials": [
+        "BH_CrateOrange",
+        "BH_DarkSteel",
+        "BH_Gunmetal",
+        "BH_HazardBlack",
+        "BH_HazardYellow",
+        "BH_Paint",
+        "BH_PaintDark",
+        "BH_PanelDark",
+        "BH_Rubber",
+        "BH_Steel"
+      ],
+      "lights": 0,
+      "bytes": 299088
+    },
+    "crate_long": {
+      "file": "assets/crate_long.glb",
+      "category": "prop",
+      "placement": "floor, prop centre",
+      "nodes": [
+        "crate_long_body",
+        "crate_long_detail",
+        "crate_long_decal"
+      ],
+      "triangles": 4936,
+      "materials": [
+        "BH_CrateGrey",
+        "BH_DarkSteel",
+        "BH_Gunmetal",
+        "BH_HazardBlack",
+        "BH_HazardYellow",
+        "BH_Paint",
+        "BH_PaintDark",
+        "BH_PanelDark",
+        "BH_Rubber",
+        "BH_Steel"
+      ],
+      "lights": 0,
+      "bytes": 194864
+    },
+    "barrel_blue": {
+      "file": "assets/barrel_blue.glb",
+      "category": "prop",
+      "placement": "floor, prop centre",
+      "nodes": [
+        "barrel_blue_body",
+        "barrel_blue_detail",
+        "barrel_blue_decal"
+      ],
+      "triangles": 11339,
+      "materials": [
+        "BH_BarrelBlue",
+        "BH_DarkSteel",
+        "BH_Paint",
+        "BH_PanelDark",
+        "BH_Steel"
+      ],
+      "lights": 0,
+      "bytes": 363728
+    },
+    "barrel_red": {
+      "file": "assets/barrel_red.glb",
+      "category": "prop",
+      "placement": "floor, prop centre",
+      "nodes": [
+        "barrel_red_body",
+        "barrel_red_detail",
+        "barrel_red_decal"
+      ],
+      "triangles": 11339,
+      "materials": [
+        "BH_BarrelRed",
+        "BH_DarkSteel",
+        "BH_HazardBlack",
+        "BH_HazardYellow",
+        "BH_Paint",
+        "BH_Steel"
+      ],
+      "lights": 0,
+      "bytes": 360684
+    },
+    "canister": {
+      "file": "assets/canister.glb",
+      "category": "prop",
+      "placement": "floor, prop centre",
+      "nodes": [
+        "canister_detail",
+        "canister_decal",
+        "canister_pipes"
+      ],
+      "triangles": 8085,
+      "materials": [
+        "BH_AccentOrange",
+        "BH_DarkSteel",
+        "BH_Gunmetal",
+        "BH_LightTeal",
+        "BH_PaintDark",
+        "BH_PanelDark",
+        "BH_PanelWhite",
+        "BH_PipeRed",
+        "BH_Recess",
+        "BH_Steel"
+      ],
+      "lights": 0,
+      "bytes": 275912
+    },
+    "console": {
+      "file": "assets/console.glb",
+      "category": "prop",
+      "placement": "floor, prop centre; screen faces -Y",
+      "nodes": [
+        "console_body",
+        "console_detail",
+        "console_decal"
+      ],
+      "triangles": 6995,
+      "materials": [
+        "BH_AccentOrange",
+        "BH_DarkSteel",
+        "BH_Gunmetal",
+        "BH_LightAmber",
+        "BH_LightGreen",
+        "BH_Paint",
+        "BH_PanelDark",
+        "BH_PanelGrey",
+        "BH_PanelLight",
+        "BH_Recess",
+        "BH_Screen",
+        "BH_ScreenDim"
+      ],
+      "lights": 0,
+      "bytes": 194364
+    },
+    "handgun": {
+      "file": "assets/handgun.glb",
+      "category": "weapon",
+      "placement": "grip origin; forward +Y, up +Z",
+      "nodes": [
+        "handgun_pipes",
+        "handgun_body",
+        "handgun_grip",
+        "handgun_detail",
+        "handgun_glow"
+      ],
+      "triangles": 9978,
+      "materials": [
+        "BH_AccentOrange",
+        "BH_DarkSteel",
+        "BH_Gunmetal",
+        "BH_LightGreen",
+        "BH_LightTeal",
+        "BH_PaintDark",
+        "BH_PanelLight",
+        "BH_PanelWhite",
+        "BH_Polymer",
+        "BH_Recess",
+        "BH_Rubber",
+        "BH_Steel"
+      ],
+      "lights": 0,
+      "bytes": 315604
+    }
+  }
+}
