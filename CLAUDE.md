@@ -50,7 +50,10 @@ milestone status are in `docs/PLAN.md`; update that table when a milestone lands
   accumulation once.) Store `float(id)` instead.
 - Don't leave Blender's viewport in Rendered mode while capturing: it competes for the GPU.
 - A ctest run in the foreground is cut off after 10 minutes, and background runs after
-  another 10. The full 1080p walk (~1000 frames) has to stay inside that. If a run is
+  another 10. The 40 × 40 ship's 1080p walk (~6000 frames at 12 spp, ~0.08 s each) is split
+  into `film_walkthrough_a` and `_b`; run them with separate ctest commands.
+- Ship moods (lit, dim, dark, derelict) live in `src/world/Sections.*`. They use their own
+  `Rng` streams: never draw from the maze's stream for them, or every layout changes. If a run is
   stopped, its `Bulkhead.exe` can keep running and lock the exe for the next build:
   wait for it to finish.
 

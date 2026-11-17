@@ -18,7 +18,24 @@ Color roomFloorColor(RoomKind k) {
     return rgb(0x444444);
 }
 
+Color moodColor(Mood m) {
+    switch (m) {
+        case Mood::Lit: return rgb(0x3b5470);       // cool steel blue
+        case Mood::Dim: return rgb(0x5c4826);       // amber
+        case Mood::Dark: return rgb(0x1e1a3a);      // deep indigo
+        case Mood::Derelict: return rgb(0x5a2e22);  // rust
+    }
+    return rgb(0x2c3644);
+}
+
 namespace {
+
+Color mix(Color a, Color b, float t) {
+    auto ch = [t](uint8_t x, uint8_t y) { return uint8_t(std::lround(float(x) + (float(y) - float(x)) * t)); };
+    return {ch(a.r, b.r), ch(a.g, b.g), ch(a.b, b.b), 255};
+}
+
+constexpr Color kSectionGate = rgb(0xb8c8d8);
 
 constexpr Color kBackground = rgb(0x0b0f14);
 constexpr Color kVoid = rgb(0x10151b);
@@ -70,6 +87,12 @@ OverheadMap renderOverheadMap(const Maze& maze, const OverheadStyle& style) {
     const int grateInset = std::max(2, c / 10);
     const int grateStep = std::max(3, c / 11);
     const int panelInset = std::max(2, c / 16);
+    const Sections* sec = style.sections;
+    // neighbouring sections with the same mood differ a little in brightness
+    auto sectionShade = [&](int x, int y) {
+        int s = sec->sectionAt(x, y);
+        return s < 0 ? 1.0f : 0.9f + 0.2f * float((uint32_t(s) * 2654435761u) >> 24) / 255.0f;
+    };
     for (int y = 0; y < maze.height(); ++y)
         for (int x = 0; x < maze.width(); ++x) {
             const int px = mg + x * c, py = mg + y * c;
@@ -78,14 +101,18 @@ OverheadMap renderOverheadMap(const Maze& maze, const OverheadStyle& style) {
                     for (int j = py; j < py + c; ++j)
                         for (int i = px; i < px + c; ++i) img.set(i, j, ((i + j) % 10) < 2 ? kVoidHatch : kVoid);
                     break;
-                case CellKind::Corridor:
-                    img.fillRect(px, py, px + c, py + c, kCorridor);
+                case CellKind::Corridor: {
+                    Color floor = sec ? shade(moodColor(sec->moodAt(x, y)), sectionShade(x, y)) : kCorridor;
+                    Color grate = sec ? shade(floor, 0.75f) : kCorridorGrate;
+                    img.fillRect(px, py, px + c, py + c, floor);
                     for (int j = py + grateInset; j < py + c - grateInset; ++j)
                         for (int i = px + grateInset; i < px + c - grateInset; ++i)
-                            if ((i - px) % grateStep == 0 || (j - py) % grateStep == 0) img.set(i, j, kCorridorGrate);
+                            if ((i - px) % grateStep == 0 || (j - py) % grateStep == 0) img.set(i, j, grate);
                     break;
+                }
                 case CellKind::Room: {
                     Color floor = roomFloorColor(maze.rooms()[size_t(maze.roomAt(x, y))].kind);
+                    if (sec) floor = shade(mix(floor, moodColor(sec->moodAt(x, y)), 0.5f), sectionShade(x, y));
                     img.fillRect(px, py, px + c, py + c, shade(floor, 0.8f));  // tile seams
                     img.fillRect(px + 1, py + 1, px + c - 1, py + c - 1, floor);
                     img.fillRect(px + panelInset, py + panelInset, px + c - panelInset, py + c - panelInset,
@@ -108,6 +135,24 @@ OverheadMap renderOverheadMap(const Maze& maze, const OverheadStyle& style) {
             int y0 = int(std::min(pts[i].y, pts[i + 1].y)), y1 = int(std::max(pts[i].y, pts[i + 1].y));
             img.fillRect(x0 - t / 2, y0 - t / 2, x1 - t / 2 + t, y1 - t / 2 + t, kRoute);
         }
+    }
+
+    // --- Section borders: a dashed gate across every opening between sections ---
+    if (sec) {
+        const int gt = std::max(2, c / 20);
+        const int dash = std::max(3, c / 10);
+        for (int y = 0; y < maze.height(); ++y)
+            for (int x = 0; x < maze.width(); ++x)
+                for (Dir d : {Dir::East, Dir::South}) {
+                    if (!maze.passable(x, y, d)) continue;
+                    const int nx = x + kDx[int(d)], ny = y + kDy[int(d)];
+                    if (sec->sectionAt(x, y) == sec->sectionAt(nx, ny)) continue;
+                    const int px = mg + x * c, py = mg + y * c;
+                    EdgeLine e = d == Dir::East ? EdgeLine{true, px + c, py} : EdgeLine{false, py + c, px};
+                    const int a = e.start + c / 5, b = e.start + c - c / 5;
+                    for (int s0 = a; s0 < b; s0 += 2 * dash)
+                        fillAlong(img, e, s0, std::min(s0 + dash, b), gt, [](int) { return kSectionGate; });
+                }
     }
 
     // --- Walls and doors ---------------------------------------------------

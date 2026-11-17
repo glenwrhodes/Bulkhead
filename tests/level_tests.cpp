@@ -195,6 +195,121 @@ void testGame() {
     CHECK(names.count("corridor") && names.count("door") && names.count("room") && names.count("junction"));
 }
 
+// The camera bob: about two footsteps a second, not a rabbit's hop.
+void testBob() {
+    CHECK(Game::stepRate(Game::kWalkSpeed) > 1.8f && Game::stepRate(Game::kWalkSpeed) < 2.2f);
+    CHECK(Game::stepRate(3.4f) < 2.4f && Game::stepRate(5.8f) < 2.8f);
+    MazeParams p;
+    p.seed = 1234;
+    Game game(g_kit, p);
+    // count upward crossings of eye height over 8 s of the scripted walk
+    int crossings = 0;
+    float prev = 0.0f;
+    const float t0 = 2.0f, t1 = std::min(10.0f, game.walkDuration() - Game::kEndPause - 0.5f);
+    for (float t = t0; t <= t1; t += 1.0f / 240.0f) {
+        game.setWalkTime(t);
+        float y = game.camera().position.y - kEyeHeight;
+        if (t > t0 && prev <= 0.0f && y > 0.0f) ++crossings;
+        prev = y;
+    }
+    const float hz = float(crossings) / (t1 - t0);
+    std::printf("  scripted walk bob: %.2f per second (was 3.5)\n", hz);
+    CHECK_MSG(hz > 1.7f && hz < 2.3f, std::format("bob {:.2f} Hz", hz));
+}
+
+// Sections on the full-size ship: changing lights, emissive power, explored cells, the
+// flashlight, and one corridor shot per mood.
+void testMood() {
+    MazeParams p;
+    p.width = p.height = 40;
+    p.seed = 1234;
+    Game game(g_kit, p);
+    const Level& level = game.level();
+    CHECK(level.missingModels.empty());
+    CHECK(game.lightRadiance().size() == level.lights.size());
+
+    int dead = 0, lit = 0;
+    for (const Vec3& r : game.lightRadiance()) (r.x + r.y + r.z < 1e-4f ? dead : lit)++;
+    std::printf("  40x40 seed 1234: %zu lights, %d dark right now, %d lit\n", level.lights.size(), dead, lit);
+    CHECK(dead > 50 && lit > 200);
+
+    // flicker: some lights change over a few seconds
+    const std::vector<Vec3> before = game.lightRadiance();
+    int changed = 0;
+    for (float t = 0.1f; t < 6.0f; t += 0.1f) {
+        game.setTime(t);
+        for (size_t i = 0; i < before.size(); ++i)
+            if (std::abs(game.lightRadiance()[i].x - before[i].x) > 0.5f) {
+                ++changed;
+                break;
+            }
+    }
+    CHECK_MSG(changed > 10, std::format("lights changed in only {} of 59 steps", changed));
+
+    std::vector<SceneInstance> instances;
+    game.buildInstances(instances);
+    int darkPanels = 0, gunNeutral = 0;
+    for (const SceneInstance& si : instances) {
+        darkPanels += si.emissive.x < 0.05f;
+        if (si.flags & kInstanceGun) gunNeutral += si.emissive.x == 1.0f && si.emissive.y == 1.0f;
+    }
+    CHECK(darkPanels > 100);
+    CHECK(gunNeutral > 0);
+
+    // explored: the spawn is seen at once, the walk reveals more, never the whole ship
+    auto seen = [&] {
+        int n = 0;
+        for (uint8_t e : game.explored()) n += e != 0;
+        return n;
+    };
+    const Int2 spawn = game.maze().startCell();
+    CHECK(game.explored()[size_t(spawn.y * 40 + spawn.x)] != 0);
+    const int atStart = seen();
+    for (float t = 0.0f; t < game.walkDuration(); t += 0.25f) {
+        game.setWalkTime(t);
+        game.updateDoors(0.25f);
+    }
+    const int atEnd = seen();
+    std::printf("  explored: %d cells at the start, %d at the exit (of %d)\n", atStart, atEnd, 40 * 40);
+    CHECK(atEnd > atStart + 30 && atEnd < 40 * 40);
+
+    const Flashlight f = game.flashlight();
+    CHECK(f.on && f.intensity > 0.0f && f.cosInner > f.cosOuter);
+    CHECK(std::abs(length(f.direction) - 1.0f) < 1e-3f && length(f.position - game.camera().position) < 1.0f);
+    CHECK(dot(f.direction, game.camera().forward()) > 0.98f);
+    game.setFlashlight(false);
+    CHECK(!game.flashlight().on);
+
+    // one corridor shot per mood, standing inside that mood
+    std::vector<float> none(level.doors.size(), 0.0f);
+    std::set<std::string> names;
+    for (const Shot& s : game.findShots()) {
+        names.insert(s.name);
+        CHECK_MSG(!level.collision.overlaps({s.camera.position.x, s.camera.position.z}, 0.2f, none),
+                  "shot camera inside geometry: " + s.name);
+        if (!s.name.starts_with("corridor_")) continue;
+        game.setCamera(s.camera);
+        CHECK_MSG(s.name == "corridor_" + std::string(toString(game.moodAtCamera())),
+                  s.name + " is in a " + std::string(toString(game.moodAtCamera())) + " section");
+    }
+    for (const char* n : {"corridor_lit", "corridor_dim", "corridor_dark", "corridor_derelict"})
+        CHECK_MSG(names.count(n) == 1, std::string("no shot ") + n);
+
+    // a few full-size levels pass the same structural checks as the small ones
+    for (uint64_t seed : {7u, 42u, 2026u}) {
+        p.seed = seed;
+        const Maze maze = Maze::generate(p);
+        const Level l = buildLevel(maze, g_kit);
+        std::vector<float> open(l.doors.size(), 1.0f);
+        WalkPath walk(l.route);
+        int clipped = 0;
+        for (float s = 0; s <= walk.length(); s += 0.25f)
+            if (l.collision.overlaps(walk.at(s), 0.25f, open)) ++clipped;
+        CHECK_MSG(clipped == 0, std::format("40x40 seed {}: walk clips geometry at {} samples", seed, clipped));
+        CHECK(l.missingModels.empty() && int(l.doors.size()) == maze.countDoors());
+    }
+}
+
 void testCollision() {
     Collision c;
     c.add({0, 0, 1, 1});
@@ -224,7 +339,8 @@ int main(int argc, char** argv) {
         void (*fn)();
     };
     const Test tests[] = {{"kit", testKit}, {"collision", testCollision}, {"levels (40 seeds)", testLevels},
-                          {"doors", testDoors}, {"game", testGame}};
+                          {"doors", testDoors}, {"game", testGame}, {"camera bob", testBob},
+                          {"sections, lights, map, flashlight (40x40)", testMood}};
     for (const Test& t : tests) {
         const int before = g_failures;
         std::printf("[ RUN  ] %s\n", t.name);

@@ -35,6 +35,19 @@ struct FrameSettings {
     int samples = 1;           // >1: average this many sub-frames of a still camera (capture)
     bool resetHistory = false; // window mode: drop the temporal history (teleport, seed change)
     int maxHistory = 16;       // window mode: frames blended at most
+
+    // Current radiance of every Level light (flicker etc.); null = every light at full power.
+    const std::vector<Vec3>* lightRadiance = nullptr;
+    // Flashlight: a spot light (cone from cosOuter to cosInner, plus a faint spill).
+    bool flashlight = false;
+    Vec3 flashPos;
+    Vec3 flashDir{0, 0, -1};
+    float flashIntensity = 0.0f;
+    float flashCosInner = 1.0f, flashCosOuter = 0.9f;
+    float haze = 1.0f;         // multiplier on every cell's haze density (0 = none)
+    // Cells the player has seen (y * w + x, non-zero = seen); null = the whole map shows.
+    const std::vector<uint8_t>* explored = nullptr;
+    float minimapCells = 6.0f; // minimap shows this many cells either side of the player
 };
 
 class Renderer {
@@ -48,7 +61,9 @@ public:
     uint32_t height() const { return height_; }
 
     void resize(uint32_t width, uint32_t height);
-    void setMapImage(const Image& image);
+    // cellPx / marginPx describe the map's grid (see OverheadMap); needed for the minimap
+    // zoom and for hiding unexplored cells.
+    void setMapImage(const Image& image, int cellPx = 0, int marginPx = 0);
     void setKit(const Kit& kit);
     void setLevel(const Level& level);
 
@@ -79,6 +94,13 @@ private:
         ComPtr<ID3D12Resource> tlas;
         ComPtr<ID3D12Resource> tlasScratch;
         uint32_t capacity = 0;
+        // per-frame copies, written by the CPU each frame (upload heap, persistently mapped)
+        ComPtr<ID3D12Resource> lights;       // GpuLight per Level light, current radiance
+        void* lightsPtr = nullptr;
+        uint32_t lightsCapacity = 0;
+        ComPtr<ID3D12Resource> explored;     // uint per cell
+        void* exploredPtr = nullptr;
+        uint32_t exploredCapacity = 0;
     };
 
     void createPipelines();
@@ -127,6 +149,7 @@ private:
 
     ComPtr<ID3D12Resource> mapTexture_;
     uint32_t mapWidth_ = 1, mapHeight_ = 1;
+    int mapCellPx_ = 0, mapMarginPx_ = 0;
 
     // kit
     const Kit* kit_ = nullptr;
@@ -134,7 +157,12 @@ private:
     std::vector<ComPtr<ID3D12Resource>> blas_;
     std::vector<uint64_t> partTriangles_;
     // level
-    ComPtr<ID3D12Resource> lightBuffer_, cellBuffer_, cellLightBuffer_;
+    struct GpuLight {
+        float posRadius[4], radianceRange[4];
+    };
+    std::vector<GpuLight> lights_;  // full-power lights; copied per frame with current radiance
+    ComPtr<ID3D12Resource> cellBuffer_, cellLightBuffer_, cellInfoBuffer_;
+    bool levelSet_ = false;
     float gridW_ = 1, gridH_ = 1, lightCount_ = 0;
     uint64_t lastSceneTriangles_ = 0;
 };

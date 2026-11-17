@@ -14,7 +14,12 @@ Custom C++20 engine on DirectX 12 with DXR ray tracing (RTX 4090 Laptop GPU, ray
 | 3 | Blender kit round 1: corridor pieces, room pieces, door frame + windowed sliding door, pipes, barrels, crates, handgun, exported to .glb | **Done (round 2)**: 23 pieces in `assets/`, see `art/blender/README.md` |
 | 4 | Build the maze from the kit; ray-traced lighting | **Done (round 4)**: inline-RT path tracer (see Rendering) |
 | 5 | First-person walking with collision, doors that open, gun viewmodel, scripted walk-through capture | **Done (round 4)** |
-| next | Creature model, rig and animation (Blender); grid-path AI with ray-query line of sight; shooting; weapon pickups; audio; denoiser | |
+| 6 | Part 2, round 5: 40 × 40 ship split into sections with moods (lit, dim, dark, derelict); lights that flicker, strobe, die or pulse red; flashlight; procedural grime and rust; haze with lit beams; zoomed minimap that only shows explored cells; slower camera bob; timing run by mood | **Done (round 5)**: see Sections and moods |
+| 7 | Round 6: derelict Blender pieces (broken ceiling panels, hanging wires, open pipe ends, low pipes, debris, beacons), sparks, steam, crouch, planned film route | |
+| 8 | Round 7: arms holding the gun, firing (muzzle flash light, bolt, impacts, recoil) | |
+| 9 | Round 8: the creature (rigid armoured plates, Blender rig and crawl cycle), crawling on floors, walls and ceilings | |
+| 10 | Round 9: hunting AI, leap, player death; four hits to kill | |
+| 11 | Round 10: game loop with several creatures; full film pass | |
 
 ## Maze generation (`src/world/Maze.*`)
 
@@ -33,6 +38,41 @@ Custom C++20 engine on DirectX 12 with DXR ray tracing (RTX 4090 Laptop GPU, ray
   - The exit is the farthest room.
   - The A* route is valid and as short as the BFS distance.
   - The same seed always produces the same layout.
+
+## Sections and moods (round 5, `src/world/Sections.*`)
+
+The ship is 40 × 40 cells (160 m square, about 1500 walkable cells, 4000 placed models,
+2000 lights). It is split into about 17 **sections**, each with a **mood**:
+
+| Mood | Lights | Wear | Haze (1/m) | Map colour |
+|---|---|---|---|---|
+| Lit | full, cool white; 5% flicker | 0.12 | 0.002 | steel blue |
+| Dim | 17%, warm amber; 15% flicker, 23% dead | 0.4 | 0.007 | amber |
+| Dark | 72% dead, the rest red emergency (pulsing) | 0.55 | 0.012 | indigo |
+| Derelict | 40% dead, 26% flicker, 10% strobe, the rest 30%, sickly yellow | 0.92 | 0.016 | rust |
+
+- **Sections** grow at the same time from anchors spread out by walking distance (the first anchor is
+  the start). Rooms join a section whole, so every section is one connected piece.
+- **Moods** get darker with depth: sections are ranked by the walking distance of their anchor from
+  the start, the moods are dealt out in the order lit, dim, derelict, dark, and the ranks are
+  shuffled a little. The start section is always lit. Neighbouring sections with the same mood are
+  swapped apart where possible.
+- **Per cell:** the light behaviour (`CellPower`: steady, flicker, strobe, dead, emergency), a wear
+  value and a haze density. Wear and haze are softened across section borders. Rooms get 35% of the
+  haze, because their size and number of lights would otherwise turn it into steam. The spawn
+  room is steady; the exit airlock pulses red.
+- **Determinism:** sections use their own `Rng` streams, so the maze (and `rng(1234).next()`) is
+  unchanged. Flicker is a pure function of time, so a capture is the same every run.
+- **Game:** every frame `Game` turns the cell powers into each light's radiance and each
+  instance's emissive multiplier (dead panels go dark, emergency panels glow red). When the
+  lighting near the camera changes a lot, the window keeps only 3 frames of history so flicker
+  stays sharp.
+- **Map:** the overhead map tints floors by mood and marks the openings between sections with
+  dashed gates. In game, the minimap is a 13-cell window around the player, and both maps only
+  show cells the player has seen (a whole room on entering it, straight down open corridors, side
+  openings, and through doors while they are open).
+- **Camera bob:** one bob per footstep at `1.55 + 0.17 × speed` steps a second (2.0 Hz on the
+  scripted walk, was 3.5), with a small sideways sway at half that rate.
 
 ## Rendering (round 4)
 
@@ -53,6 +93,14 @@ simpler (one compute shader, no raster pipeline) and does more.
   - Window: temporal reprojection, which checks that the reprojected pixel saw the same surface.
   - Captures: N sub-frames averaged from a still camera.
 - **RT off:** unshadowed direct light plus flat ambient, with no bounce or reflections. Used for the comparison shots.
+- **Round 5 additions:**
+  - **Lights each frame:** the light buffer is re-uploaded every frame with current radiance, and dead lights skip their shadow rays (dark sections are the fastest to render).
+  - **Instance emissive:** each instance's emissive is multiplied by the power of its cell.
+  - **Wear:** procedural grime patches, narrow rust runs down walls, dirt on floors and soot on ceilings, scaled by the cell's wear and blended between cells. Grimy areas also get rougher and less metallic.
+  - **Flashlight:** a shadowed spot light just past the gun muzzle (46 W/sr, 9°/24° cone and a faint spill), also lighting bounces.
+  - **Haze:** single scattering along the primary ray. Two stratified distances each pick one fixture in proportion to its unshadowed contribution and send one shadow ray to it. One equiangular sample for the flashlight starts just past the light, where the ray enters the cone.
+
+Timing run (`ctest -L bench`, whole 200 s walk, 1080p, 1 sample per pixel plus temporal history, RTX 4090 Laptop): **median 6.5 ms**, 95th percentile 8.9 ms. By mood: lit 7.6 ms, dim 7.7 ms, derelict 5.6 ms, dark 4.9 ms (medians).
 - **`shaders/present.hlsl`:** exposure, AgX tone mapping (the same view transform as the Blender renders), crosshair, minimap and full map.
 - Rendering goes into an offscreen target, which is either presented or read back, so the window and captures share one path.
 
@@ -63,7 +111,12 @@ Bash on this machine only runs `cmake` and `ctest`, so the game runs inside ctes
 - `Bulkhead.exe --capture <dir>` renders on the GPU without a window. It writes `frame_0001.png` and onward, plus `overhead.png`, `capture.log` and `capture.json`.
 - `Bulkhead.exe --overhead <file.png>` writes the top-down map using only the CPU.
 - `capture_check` verifies that each PNG has the right size, is not a flat colour, and that the frames change over time.
-- Test labels: `unit` (no GPU), `smoke` (short captures, including one with the D3D12 debug layer on), and `film` (1080p captures for the video).
+- Test labels:
+  - `unit`: no GPU.
+  - `smoke`: short captures, including one with the D3D12 debug layer on.
+  - `film`: 1080p captures for the video. The walk is split into `film_walkthrough_a` and `_b`; run them one at a time, because a single ctest command is cut off after 10 minutes.
+  - `bench`: the timing run over the whole walk.
+  - `diag`: diagnostics, not part of the normal runs.
 
 ## Blender asset kit (milestone 3)
 

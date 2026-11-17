@@ -12,6 +12,7 @@
 #include "core/Math.h"
 #include "world/Collision.h"
 #include "world/Maze.h"
+#include "world/Sections.h"
 
 namespace bh {
 
@@ -35,6 +36,7 @@ struct PlacedModel {
     int model = -1;
     Mat4 transform;
     int door = -1;  // door leaves: index into Level::doors (animated)
+    int cell = -1;  // grid cell (y * width + x) whose power feeds its emissive surfaces
 };
 
 struct Door {
@@ -47,9 +49,10 @@ struct Door {
 
 struct WorldLight {
     Vec3 position;
-    Vec3 radiance;        // colour x intensity (W/sr)
+    Vec3 radiance;        // colour x intensity (W/sr) of the fixture at full power
     float radius = 0.15f;
     float range = 9.0f;
+    int cell = 0;         // grid cell (y * width + x); its CellPower scales the radiance
 };
 
 struct Level {
@@ -60,6 +63,7 @@ struct Level {
     int gridW = 0, gridH = 0;
     std::vector<uint32_t> cellStart, cellCount, cellLights;
     Collision collision;
+    Sections sections;        // moods, per-cell light behaviour, wear and haze
     std::vector<Int2> route;  // start -> exit
     Vec3 spawn;
     float spawnYaw = 0.0f;

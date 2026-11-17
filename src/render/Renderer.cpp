@@ -23,11 +23,12 @@ struct TraceConstants {
     float camPos[4], camRight[4], camUp[4], camFwd[4];
     float prevPos[4], prevRight[4], prevUp[4], prevFwd[4];
     float resolution[4], jitter[4], grid[4], options[4];
+    float flashPos[4], flashDir[4], flashCone[4], haze[4];
 };
 static_assert(sizeof(TraceConstants) <= 256, "one constant slot");
 
 struct PresentConstants {
-    float p0[4], p1[4], p2[4], p3[4];
+    float p0[4], p1[4], p2[4], p3[4], p4[4], p5[4];
 };
 constexpr UINT kPresentConstantCount = sizeof(PresentConstants) / 4;
 
@@ -37,11 +38,13 @@ struct GpuSubmesh {
 struct GpuMaterial {
     float baseAlpha[4], emissiveRough[4], metalPad[4];
 };
-struct GpuLight {
-    float posRadius[4], radianceRange[4];
-};
 struct GpuInstanceInfo {
     uint32_t firstSubmesh, flags, pad0, pad1;
+    float emissive[4];
+};
+static_assert(sizeof(GpuInstanceInfo) == 32, "matches InstInfo in trace.hlsl");
+struct GpuCellInfo {
+    float decay, haze, mood, pad;
 };
 
 // descriptor heap slots
@@ -223,7 +226,7 @@ void Renderer::createPipelines() {
     ID3D12Device5* device = gpu_.device();
 
     // --- trace (compute) ---
-    D3D12_ROOT_PARAMETER tp[11]{};
+    D3D12_ROOT_PARAMETER tp[12]{};
     tp[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     tp[0].Descriptor.ShaderRegister = 0;
     for (UINT i = 1; i <= 9; ++i) {
@@ -242,9 +245,11 @@ void Renderer::createPipelines() {
     tp[10].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
     tp[10].DescriptorTable.NumDescriptorRanges = 2;
     tp[10].DescriptorTable.pDescriptorRanges = ranges;
+    tp[11].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+    tp[11].Descriptor.ShaderRegister = 11;  // t11: per-cell wear, haze, mood
     for (auto& p : tp) p.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     D3D12_ROOT_SIGNATURE_DESC trs{};
-    trs.NumParameters = 11;
+    trs.NumParameters = 12;
     trs.pParameters = tp;
     traceRS_ = serializeRootSignature(device, trs);
 
@@ -258,7 +263,7 @@ void Renderer::createPipelines() {
     prange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     prange.NumDescriptors = 2;
     prange.OffsetInDescriptorsFromTableStart = 0;
-    D3D12_ROOT_PARAMETER pp[2]{};
+    D3D12_ROOT_PARAMETER pp[3]{};
     pp[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
     pp[0].Constants.Num32BitValues = kPresentConstantCount;
     pp[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
@@ -266,6 +271,9 @@ void Renderer::createPipelines() {
     pp[1].DescriptorTable.NumDescriptorRanges = 1;
     pp[1].DescriptorTable.pDescriptorRanges = &prange;
     pp[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    pp[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+    pp[2].Descriptor.ShaderRegister = 2;  // t2: explored cells
+    pp[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     D3D12_STATIC_SAMPLER_DESC sampler{};
     sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
     sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
@@ -273,7 +281,7 @@ void Renderer::createPipelines() {
     sampler.MaxLOD = D3D12_FLOAT32_MAX;
     sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     D3D12_ROOT_SIGNATURE_DESC prs{};
-    prs.NumParameters = 2;
+    prs.NumParameters = 3;
     prs.pParameters = pp;
     prs.NumStaticSamplers = 1;
     prs.pStaticSamplers = &sampler;
@@ -387,8 +395,10 @@ void Renderer::resize(uint32_t width, uint32_t height) {
 // Uploads
 // ---------------------------------------------------------------------------
 
-void Renderer::setMapImage(const Image& image) {
+void Renderer::setMapImage(const Image& image, int cellPx, int marginPx) {
     if (image.empty()) return;
+    mapCellPx_ = cellPx;
+    mapMarginPx_ = marginPx;
     ID3D12Device5* device = gpu_.device();
     gpu_.waitIdle();
     const D3D12_RESOURCE_DESC td =
@@ -525,12 +535,23 @@ void Renderer::setKit(const Kit& kit) {
 
 void Renderer::setLevel(const Level& level) {
     gpu_.waitIdle();
-    std::vector<GpuLight> lights;
+    lights_.clear();
     for (const WorldLight& l : level.lights)
-        lights.push_back({{l.position.x, l.position.y, l.position.z, l.radius},
-                          {l.radiance.x, l.radiance.y, l.radiance.z, l.range}});
-    if (lights.empty()) lights.push_back({});
-    lightBuffer_ = uploadBuffer(lights.data(), lights.size() * sizeof(GpuLight));
+        lights_.push_back({{l.position.x, l.position.y, l.position.z, l.radius},
+                           {l.radiance.x, l.radiance.y, l.radiance.z, l.range}});
+    std::vector<GpuCellInfo> info;
+    const Sections& sec = level.sections;
+    for (int i = 0; i < level.gridW * level.gridH; ++i) {
+        GpuCellInfo c{};
+        if (size_t(i) < sec.decay.size()) {
+            c.decay = sec.decay[size_t(i)];
+            c.haze = sec.haze[size_t(i)];
+            c.mood = float(int(sec.moodAt(i % level.gridW, i / level.gridW)));
+        }
+        info.push_back(c);
+    }
+    if (info.empty()) info.push_back({});
+    cellInfoBuffer_ = uploadBuffer(info.data(), info.size() * sizeof(GpuCellInfo));
     std::vector<uint32_t> cells;
     for (size_t i = 0; i < level.cellStart.size(); ++i) {
         cells.push_back(level.cellStart[i]);
@@ -544,6 +565,7 @@ void Renderer::setLevel(const Level& level) {
     gridW_ = float(level.gridW);
     gridH_ = float(level.gridH);
     lightCount_ = float(level.lights.size());
+    levelSet_ = true;
     historyValid_ = false;
 }
 
@@ -604,10 +626,39 @@ void Renderer::ensureInstanceCapacity(FrameContext& f, uint32_t count) {
 }
 
 void Renderer::recordScene(const std::vector<SceneInstance>& instances, const FrameSettings& s) {
-    if (!kit_ || !lightBuffer_) throw std::logic_error("Renderer: setKit and setLevel before rendering");
+    if (!kit_ || !levelSet_) throw std::logic_error("Renderer: setKit and setLevel before rendering");
     FrameContext& f = frames_[frameIndex_];
     const uint32_t n = uint32_t(instances.size());
     ensureInstanceCapacity(f, std::max(n, 1u));
+
+    // --- per-frame lights (current radiance) and explored cells ---
+    // This frame context's buffers are idle: beginFrame waited for its fence.
+    auto ensure = [&](ComPtr<ID3D12Resource>& buf, void*& ptr, uint32_t& cap, uint32_t count, size_t stride) {
+        if (buf && count <= cap) return;
+        if (buf) buf->Unmap(0, nullptr);
+        cap = std::max(count + count / 4, 64u);
+        buf = createBuffer(uint64_t(cap) * stride, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
+        BH_CHECK(buf->Map(0, nullptr, &ptr));
+    };
+    {
+        const uint32_t lc = uint32_t(std::max<size_t>(lights_.size(), 1));
+        ensure(f.lights, f.lightsPtr, f.lightsCapacity, lc, sizeof(GpuLight));
+        auto* dst = static_cast<GpuLight*>(f.lightsPtr);
+        if (lights_.empty()) dst[0] = {};
+        const bool live = s.lightRadiance && s.lightRadiance->size() == lights_.size();
+        for (size_t i = 0; i < lights_.size(); ++i) {
+            dst[i] = lights_[i];
+            if (live) {
+                const Vec3& r = (*s.lightRadiance)[i];
+                dst[i].radianceRange[0] = r.x, dst[i].radianceRange[1] = r.y, dst[i].radianceRange[2] = r.z;
+            }
+        }
+        const uint32_t cells = uint32_t(std::max(1.0f, gridW_ * gridH_));
+        ensure(f.explored, f.exploredPtr, f.exploredCapacity, cells, sizeof(uint32_t));
+        auto* ex = static_cast<uint32_t*>(f.exploredPtr);
+        const bool fog = s.explored && s.explored->size() == cells;
+        for (uint32_t i = 0; i < cells; ++i) ex[i] = fog ? ((*s.explored)[i] ? 1u : 0u) : 1u;
+    }
 
     // --- top-level acceleration structure ---
     auto* descs = static_cast<D3D12_RAYTRACING_INSTANCE_DESC*>(f.instanceDescsPtr);
@@ -627,7 +678,7 @@ void Renderer::recordScene(const std::vector<SceneInstance>& instances, const Fr
         d.Flags = D3D12_RAYTRACING_INSTANCE_FLAG_NONE;
         d.AccelerationStructure = blas_[si.part]->GetGPUVirtualAddress();
         descs[i] = d;
-        infos[i] = {part.firstSubmesh, si.flags, 0, 0};
+        infos[i] = {part.firstSubmesh, si.flags, 0, 0, {si.emissive.x, si.emissive.y, si.emissive.z, 0.0f}};
         tris += partTriangles_[si.part];
     }
     lastSceneTriangles_ = tris;
@@ -675,6 +726,16 @@ void Renderer::recordScene(const std::vector<SceneInstance>& instances, const Fr
         c.options[0] = s.rayTracing ? 1.0f : 0.0f;
         c.options[1] = 0.012f;
         c.options[2] = float(std::max(1, s.maxHistory));
+        c.flashPos[0] = s.flashPos.x, c.flashPos[1] = s.flashPos.y, c.flashPos[2] = s.flashPos.z;
+        c.flashPos[3] = s.flashlight ? s.flashIntensity : 0.0f;
+        c.flashDir[0] = s.flashDir.x, c.flashDir[1] = s.flashDir.y, c.flashDir[2] = s.flashDir.z;
+        c.flashDir[3] = s.flashCosOuter;
+        c.flashCone[0] = s.flashCosInner;
+        c.flashCone[1] = std::cos(std::acos(std::clamp(s.flashCosOuter, -1.0f, 1.0f)) * 1.9f);  // spill edge
+        c.flashCone[2] = 30.0f;  // range, m
+        c.haze[0] = s.haze;
+        c.haze[1] = 0.2f;        // Henyey-Greenstein g: a little forward scattering
+        c.haze[2] = s.time;
         std::memcpy(f.constantsPtr + size_t(k) * 256, &c, sizeof(c));
 
         transition(accum_[cur].Get(), accumState_[cur], D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -691,10 +752,11 @@ void Renderer::recordScene(const std::vector<SceneInstance>& instances, const Fr
         cmd_->SetComputeRootShaderResourceView(4, submeshBuffer_->GetGPUVirtualAddress());
         cmd_->SetComputeRootShaderResourceView(5, f.instanceInfo->GetGPUVirtualAddress());
         cmd_->SetComputeRootShaderResourceView(6, materialBuffer_->GetGPUVirtualAddress());
-        cmd_->SetComputeRootShaderResourceView(7, lightBuffer_->GetGPUVirtualAddress());
+        cmd_->SetComputeRootShaderResourceView(7, f.lights->GetGPUVirtualAddress());
         cmd_->SetComputeRootShaderResourceView(8, cellBuffer_->GetGPUVirtualAddress());
         cmd_->SetComputeRootShaderResourceView(9, cellLightBuffer_->GetGPUVirtualAddress());
         cmd_->SetComputeRootDescriptorTable(10, gpuSlot(kSlotTrace + cur * 4));
+        cmd_->SetComputeRootShaderResourceView(11, cellInfoBuffer_->GetGPUVirtualAddress());
         cmd_->Dispatch((width_ + 7) / 8, (height_ + 7) / 8, 1);
         last_ = cur;
         ++frameCounter_;
@@ -726,10 +788,21 @@ void Renderer::recordScene(const std::vector<SceneInstance>& instances, const Fr
     pc.p2[3] = s.minimap ? 1.0f : 0.0f;
     // stronger in the window (1 sample per frame), gentle on converged captures
     pc.p3[0] = samples > 1 ? 2.5f : 1.6f;
+    // map grid: margin and cell size as fractions of the map image
+    const bool grid = mapCellPx_ > 0;
+    pc.p4[0] = grid ? float(mapMarginPx_) / float(mapWidth_) : 0.0f;
+    pc.p4[1] = grid ? float(mapMarginPx_) / float(mapHeight_) : 0.0f;
+    pc.p4[2] = grid ? float(mapCellPx_) / float(mapWidth_) : 1.0f;
+    pc.p4[3] = grid ? float(mapCellPx_) / float(mapHeight_) : 1.0f;
+    pc.p5[0] = gridW_;
+    pc.p5[1] = gridH_;
+    pc.p5[2] = (grid && s.explored) ? 1.0f : 0.0f;
+    pc.p5[3] = grid ? s.minimapCells : 0.0f;
     cmd_->SetGraphicsRootSignature(presentRS_.Get());
     cmd_->SetPipelineState(presentPSO_.Get());
     cmd_->SetGraphicsRoot32BitConstants(0, kPresentConstantCount, &pc, 0);
     cmd_->SetGraphicsRootDescriptorTable(1, gpuSlot(kSlotPresent + last_ * 2));
+    cmd_->SetGraphicsRootShaderResourceView(2, f.explored->GetGPUVirtualAddress());
     cmd_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     cmd_->DrawInstanced(3, 1, 0, 0);
     transition(target_.Get(), targetState_, D3D12_RESOURCE_STATE_COPY_SOURCE);

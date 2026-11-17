@@ -7,10 +7,13 @@ cbuffer Present : register(b0)
     float4 p1;  // x width, y height, z map aspect (w / h), w big map opacity
     float4 p2;  // x player map u, y player map v, z player yaw, w minimap on
     float4 p3;  // x despeckle k (0 = off)
+    float4 p4;  // map grid: x,y margin (uv), z,w one cell (uv)
+    float4 p5;  // x grid w, y grid h, z hide unexplored (1 = on), w minimap half-width in cells (0 = whole map)
 };
 
 Texture2D<float4> gAccum : register(t0);
 Texture2D<float4> gMap   : register(t1);
+StructuredBuffer<uint> gExplored : register(t2);  // per cell, non-zero = seen
 SamplerState gLinear : register(s0);
 
 struct VSOut
@@ -60,24 +63,46 @@ float sdBox(float2 p, float2 b)
     return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0);
 }
 
-// Draws the map into rect (origin, size in pixels); returns colour, alpha.
-float4 drawMap(float2 px, float2 org, float2 size, float opacity)
+bool seen(float2 uv)
 {
-    float2 uv = (px - org) / size;
+    if (p5.z < 0.5) return true;
+    int2 c = int2(floor((uv - p4.xy) / p4.zw));
+    c = clamp(c, int2(0, 0), int2(p5.xy) - 1);
+    return gExplored[c.y * int(p5.x) + c.x] != 0;
+}
+
+float3 mapColor(float2 uv, float2 duv)
+{
+    if (any(uv < 0.0) || any(uv > 1.0)) return float3(0.01, 0.015, 0.02);
+    if (!seen(uv)) return float3(0.018, 0.022, 0.028);
+    // 4 taps: the big map shrinks the image, and it has no mip levels
+    float3 m = gMap.SampleLevel(gLinear, uv + duv * float2(-0.25, -0.25), 0).rgb;
+    m += gMap.SampleLevel(gLinear, uv + duv * float2(0.25, -0.25), 0).rgb;
+    m += gMap.SampleLevel(gLinear, uv + duv * float2(-0.25, 0.25), 0).rgb;
+    m += gMap.SampleLevel(gLinear, uv + duv * float2(0.25, 0.25), 0).rgb;
+    return m * 0.25;
+}
+
+// Draws the map into rect (origin, size in pixels), showing the map image around uvC
+// (uvHalf either side); returns colour, alpha.
+float4 drawMap(float2 px, float2 org, float2 size, float opacity, float2 uvC, float2 uvHalf)
+{
+    float2 local = (px - org) / size;
+    float2 uv = uvC + (local - 0.5) * 2.0 * uvHalf;
     float4 o = 0;
     float2 c = org + size * 0.5;
     float d = sdBox(px - c, size * 0.5 + 6.0);
     if (d < 0.0)
     {
         o = float4(0.01, 0.015, 0.02, 0.8);
-        if (all(uv >= 0.0) && all(uv <= 1.0))
-            o = float4(gMap.SampleLevel(gLinear, uv, 0).rgb, 0.95);
+        if (all(local >= 0.0) && all(local <= 1.0))
+            o = float4(mapColor(uv, 2.0 * uvHalf / size), 0.95);
     }
     float border = 1.0 - smoothstep(0.5, 1.8, abs(d));
     o.rgb = lerp(o.rgb, float3(0.25, 0.82, 0.88), border);
     o.a = max(o.a, border);
     // player: dot plus heading tick
-    float2 pp = org + p2.xy * size;
+    float2 pp = org + ((p2.xy - uvC) / (2.0 * uvHalf) + 0.5) * size;
     float2 h = float2(-sin(p2.z), -cos(p2.z));
     float r = max(4.0, size.y * 0.012);
     float dd = length(px - pp);
@@ -141,9 +166,20 @@ float4 PSMain(VSOut input) : SV_Target
         if (p2.w > 0.5)
         {
             float h = res.y * 0.26;
-            float2 size = float2(h * p1.z, h);
-            float2 org = float2(res.x - size.x - res.y * 0.03, res.y * 0.03);
-            float4 m = drawMap(px, org, size, 0.92);
+            float4 m;
+            if (p5.w > 0.0)
+            {
+                // zoomed: a square of cells around the player, north up
+                float2 size = float2(h, h);
+                float2 org = float2(res.x - size.x - res.y * 0.03, res.y * 0.03);
+                m = drawMap(px, org, size, 0.92, p2.xy, p5.w * p4.zw);
+            }
+            else
+            {
+                float2 size = float2(h * p1.z, h);
+                float2 org = float2(res.x - size.x - res.y * 0.03, res.y * 0.03);
+                m = drawMap(px, org, size, 0.92, float2(0.5, 0.5), float2(0.5, 0.5));
+            }
             col = lerp(col, m.rgb, m.a);
         }
     }
@@ -152,7 +188,7 @@ float4 PSMain(VSOut input) : SV_Target
         float h = res.y * 0.82;
         float2 size = float2(h * p1.z, h);
         float2 org = (res - size) * 0.5;
-        float4 m = drawMap(px, org, size, p1.w);
+        float4 m = drawMap(px, org, size, p1.w, float2(0.5, 0.5), float2(0.5, 0.5));
         col = lerp(col * (1.0 - 0.5 * p1.w), m.rgb, m.a);
     }
     return float4(col, 1.0);

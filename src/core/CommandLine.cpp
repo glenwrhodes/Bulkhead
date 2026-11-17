@@ -34,14 +34,16 @@ std::string usageText() {
         "\n"
         "Options:\n"
         "  --seed N          maze seed (capture/overhead default 1234, window default random)\n"
-        "  --size WxH        maze size in cells (default 12x12, 6..128)\n"
+        "  --size WxH        maze size in cells (default 40x40, 6..128)\n"
         "  --res WxH         render resolution / window size (default 1280x720)\n"
-        "  --frames N        frames to capture (default: the whole walk)\n"
+        "  --frames N        frames to capture or bench (default: the whole walk)\n"
         "  --fps N           capture frame rate (default 30)\n"
         "  --start S         start the capture S seconds into the walk\n"
         "  --spp N           capture samples per pixel (default 8)\n"
         "  --rt on|off       ray tracing (default on)\n"
         "  --exposure X      exposure multiplier (default 1)\n"
+        "  --flashlight on|off  the flashlight under the gun (default on)\n"
+        "  --haze X          haze density multiplier (default 1, 0 = none)\n"
         "  --no-hud          hide crosshair and minimap\n"
         "  --assets DIR      kit folder (default: found next to the executable or in the source tree)\n"
         "  --cell-px N       overhead map pixels per cell (default 64)\n"
@@ -49,7 +51,7 @@ std::string usageText() {
         "  --help            this text\n"
         "\n"
         "Window: WASD move, mouse look, Shift run, click to grab the mouse, Esc release (twice: quit),\n"
-        "        M map, R ray tracing on/off, H HUD, N new ship, F12 screenshot.\n";
+        "        F flashlight, M map, R ray tracing on/off, H HUD, N new ship, F12 screenshot.\n";
 }
 
 std::optional<Options> parseCommandLine(int argc, char** argv, std::string& error) {
@@ -107,19 +109,23 @@ std::optional<Options> parseCommandLine(int argc, char** argv, std::string& erro
             else if (a == "--fps") o.fps = n;
             else if (a == "--spp") o.spp = std::min(n, 64);
             else o.cellPx = n;
-        } else if (a == "--start" || a == "--exposure") {
+        } else if (a == "--start" || a == "--exposure" || a == "--haze") {
             auto v = value();
             float f = 0;
             if (!v) return std::nullopt;
             if (!parseNumber(*v, f) || f < 0) return bad(*v);
             if (a == "--start") o.start = f;
+            else if (a == "--haze") o.haze = f;
             else o.exposure = f;
-        } else if (a == "--rt") {
+        } else if (a == "--rt" || a == "--flashlight") {
             auto v = value();
             if (!v) return std::nullopt;
-            if (*v == "on") o.rayTracing = true;
-            else if (*v == "off") o.rayTracing = false;
+            bool on = false;
+            if (*v == "on") on = true;
+            else if (*v == "off") on = false;
             else return bad(*v);
+            if (a == "--rt") o.rayTracing = on;
+            else o.flashlight = on;
         } else if (a == "--no-hud") {
             o.hud = false;
         } else if (a == "--debug") {

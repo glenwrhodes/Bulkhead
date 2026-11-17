@@ -61,6 +61,7 @@ add_library(bulkhead_lib STATIC
   src/assets/Kit.cpp       src/assets/Kit.h
   src/world/Random.h
   src/world/Maze.cpp       src/world/Maze.h
+  src/world/Sections.cpp   src/world/Sections.h
   src/world/OverheadMap.cpp src/world/OverheadMap.h
   src/world/PathTrack.cpp  src/world/PathTrack.h
   src/world/Collision.cpp  src/world/Collision.h

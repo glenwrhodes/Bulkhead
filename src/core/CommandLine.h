@@ -20,11 +20,13 @@ struct Options {
     int width = 1280;              // render resolution (capture) / window client size (interactive)
     int height = 720;
     std::optional<uint64_t> seed;  // interactive picks a random seed when absent
-    int mazeWidth = 12;
-    int mazeHeight = 12;
-    int cellPx = 64;               // overhead map scale
+    int mazeWidth = 40;            // the ship: 40 x 40 cells of 4 m
+    int mazeHeight = 40;
+    int cellPx = 64;               // overhead map scale (the --overhead PNG)
     bool rayTracing = true;
     bool hud = true;
+    bool flashlight = true;
+    float haze = 1.0f;             // haze density multiplier
     float exposure = 1.0f;
     bool debugLayer = false;
 };

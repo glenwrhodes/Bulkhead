@@ -7,6 +7,7 @@
 #include "core/Image.h"
 #include "world/Maze.h"
 #include "world/PathTrack.h"
+#include "world/Sections.h"
 
 namespace bh {
 
@@ -14,6 +15,8 @@ struct OverheadStyle {
     int cellPx = 64;    // pixels per 4 m cell
     int marginPx = 32;  // border around the grid
     bool drawRoute = true;
+    // When set, floors are tinted by their section's mood and section borders are marked.
+    const Sections* sections = nullptr;
 };
 
 struct OverheadMap {
@@ -32,6 +35,7 @@ OverheadMap renderOverheadMap(const Maze& maze, const OverheadStyle& style = {})
 
 // Palette, shared with tests.
 Color roomFloorColor(RoomKind k);
+Color moodColor(Mood m);  // corridor floor colour of a section with this mood
 inline constexpr Color kStartColor = rgb(0x3ddc84);
 inline constexpr Color kExitColor = rgb(0xff4d4d);
 

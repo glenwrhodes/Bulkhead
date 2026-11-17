@@ -41,7 +41,7 @@ public:
                 level.missingModels.push_back(name);
             return -1;
         }
-        level.placed.push_back({idx, t, door});
+        level.placed.push_back({idx, t, door, cell});
         for (const KitLight& l : kit.model(idx).lights) {
             WorldLight w;
             w.position = t.point(l.position);
@@ -135,6 +135,7 @@ public:
             for (int x = 0; x < maze.width(); ++x)
                 for (Dir d : {Dir::East, Dir::South}) {
                     if (maze.edge(x, y, d) != Edge::Door) continue;
+                    setCell(x, y);
                     Door door;
                     door.cell = {x, y};
                     door.side = d;
@@ -171,6 +172,7 @@ public:
                     for (int d = 0; d < 4; ++d)
                         if (maze.edge(x, y, Dir(d)) == Edge::Wall) walls.push_back(Dir(d));
                     if (walls.empty() || !rng.chance(0.7f)) continue;
+                    setCell(x, y);
                     cluster(x, y, walls[rng.below(uint32_t(walls.size()))], rng);
                 }
         }
@@ -240,6 +242,7 @@ public:
             int cx = int(std::floor(p.x / kCell + 0.5f)), cy = int(std::floor(p.z / kCell + 0.5f));
             cx = std::clamp(cx, 0, level.gridW - 1);
             cy = std::clamp(cy, 0, level.gridH - 1);
+            level.lights[i].cell = cy * level.gridW + cx;
             buckets[size_t(cy * level.gridW + cx)].push_back(uint32_t(i));
         }
         level.cellStart.resize(n);
@@ -251,9 +254,12 @@ public:
         }
     }
 
+    void setCell(int x, int y) { cell = y * maze.width() + x; }
+
     const Maze& maze;
     const Kit& kit;
     Level& level;
+    int cell = -1;  // cell being built (tags placed models)
 };
 
 }  // namespace
@@ -271,26 +277,23 @@ Level buildLevel(const Maze& maze, const Kit& kit) {
     Rng rng(maze.params().seed * 7919u + 17u);
     level.route = maze.findPath(maze.startCell(), maze.exitCell());
 
+    level.sections = buildSections(maze);
+
     for (int y = 0; y < maze.height(); ++y)
         for (int x = 0; x < maze.width(); ++x) {
             Vec3 c = cellCenter(x, y);
+            b.setCell(x, y);
             switch (maze.kind(x, y)) {
                 case CellKind::Void: b.box(c, -kHalf, -kHalf, kHalf, kHalf); break;
                 case CellKind::Corridor: b.corridor(x, y); break;
                 case CellKind::Room: b.roomCell(x, y, rng); break;
             }
         }
-    for (const Room& r : maze.rooms()) b.roomCorners(r);
-    // the exit airlock runs on red emergency lighting
-    if (maze.exitRoom() >= 0) {
-        const Room& exitRoom = maze.rooms()[size_t(maze.exitRoom())];
-        for (WorldLight& l : level.lights) {
-            int cx = int(std::floor(l.position.x / kCell + 0.5f)), cy = int(std::floor(l.position.z / kCell + 0.5f));
-            if (!exitRoom.contains(cx, cy)) continue;
-            float power = l.radiance.x + l.radiance.y + l.radiance.z;
-            l.radiance = Vec3{0.85f, 0.12f, 0.06f} * power * 0.6f;
-        }
+    for (const Room& r : maze.rooms()) {
+        b.setCell(r.x, r.y);
+        b.roomCorners(r);
     }
+    // (the exit airlock's red emergency light comes from its sections power)
     b.doors();
     b.props(rng);
     b.lightGrid();

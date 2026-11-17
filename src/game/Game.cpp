@@ -23,9 +23,120 @@ Game::Game(const Kit& kit, const MazeParams& params)
     camera_.position = level_.spawn;
     camera_.yaw = level_.spawnYaw;
     gunModel_ = kit.find("handgun");
+    explored_.assign(size_t(maze_.width() * maze_.height()), 0);
+    updateLighting();
+    lightingChange_ = 0.0f;
+    reveal();
 }
 
-void Game::setCamera(const Camera& c) { camera_ = c; }
+void Game::setCamera(const Camera& c) {
+    camera_ = c;
+    reveal();
+}
+
+void Game::setTime(float t) {
+    time_ = t;
+    updateLighting();
+}
+
+Int2 Game::cameraCell() const {
+    return {int(std::floor(camera_.position.x / kCell + 0.5f)), int(std::floor(camera_.position.z / kCell + 0.5f))};
+}
+
+Mood Game::moodAtCamera() const { return level_.sections.moodAt(cameraCell()); }
+
+void Game::updateLighting() {
+    const Sections& sec = level_.sections;
+    const size_t n = sec.power.size();
+    const Int2 cc = cameraCell();
+    float before = 0.0f, after = 0.0f, diff = 0.0f;
+    auto lum = [](Vec3 v) { return 0.2126f * v.x + 0.7152f * v.y + 0.0722f * v.z; };
+    const bool first = cellLight_.size() != n;
+    cellLight_.resize(n);
+    cellEmissive_.resize(n);
+    for (size_t i = 0; i < n; ++i) {
+        const Vec3 old = cellLight_[i];
+        cellLight_[i] = lightMultiplier(sec.power[i], time_);
+        cellEmissive_[i] = emissiveMultiplier(sec.power[i], time_);
+        const int x = int(i) % sec.width, y = int(i) / sec.width;
+        if (!first && std::abs(x - cc.x) <= 2 && std::abs(y - cc.y) <= 2) {
+            before += lum(old);
+            after += lum(cellLight_[i]);
+            diff += std::abs(lum(cellLight_[i]) - lum(old));
+        }
+    }
+    lightingChange_ = diff / std::max(0.15f, std::max(before, after));
+    lightRadiance_.resize(level_.lights.size());
+    for (size_t i = 0; i < level_.lights.size(); ++i) {
+        const WorldLight& l = level_.lights[i];
+        const Vec3 k = cellLight_[size_t(l.cell)];
+        lightRadiance_[i] = {l.radiance.x * k.x, l.radiance.y * k.y, l.radiance.z * k.z};
+    }
+}
+
+// Marks what the player can see from where they stand: their cell (a whole room when in
+// one), straight down each open corridor a few cells, and the side openings along it.
+// Void cells next to a seen cell are marked too, so the map shows the walls around it.
+void Game::reveal() {
+    const Int2 c = cameraCell();
+    if (!maze_.inBounds(c) || maze_.kind(c) == CellKind::Void) return;
+    const int W = maze_.width();
+    auto mark = [&](Int2 m) {
+        if (!maze_.inBounds(m)) return;
+        explored_[size_t(m.y * W + m.x)] = 1;
+        for (int dy = -1; dy <= 1; ++dy)
+            for (int dx = -1; dx <= 1; ++dx) {
+                Int2 n{m.x + dx, m.y + dy};
+                if (maze_.inBounds(n) && maze_.kind(n) == CellKind::Void) explored_[size_t(n.y * W + n.x)] = 1;
+            }
+    };
+    auto see = [&](Int2 from, Dir d) {
+        const Edge e = maze_.edge(from.x, from.y, d);
+        if (e == Edge::Wall) return false;
+        if (e == Edge::Door) {
+            // through a door only while it is open
+            for (const Door& door : level_.doors) {
+                Int2 b{door.cell.x + kDx[int(door.side)], door.cell.y + kDy[int(door.side)]};
+                Int2 to{from.x + kDx[int(d)], from.y + kDy[int(d)]};
+                bool same = (door.cell == from && b == to) || (door.cell == to && b == from);
+                if (same) return doorOpen_[size_t(&door - level_.doors.data())] > 0.5f;
+            }
+            return false;
+        }
+        return true;
+    };
+    mark(c);
+    if (int r = maze_.roomAt(c.x, c.y); r >= 0) {
+        const Room& room = maze_.rooms()[size_t(r)];
+        for (int y = room.y; y < room.y + room.h; ++y)
+            for (int x = room.x; x < room.x + room.w; ++x) mark({x, y});
+    }
+    for (int di = 0; di < 4; ++di) {
+        Int2 cur = c;
+        for (int k = 0; k < 7; ++k) {
+            if (!see(cur, Dir(di))) break;
+            cur = {cur.x + kDx[di], cur.y + kDy[di]};
+            mark(cur);
+            // peek into side openings
+            for (int si : {(di + 1) & 3, (di + 3) & 3})
+                if (maze_.edge(cur.x, cur.y, Dir(si)) == Edge::Open) mark({cur.x + kDx[si], cur.y + kDy[si]});
+            if (maze_.kind(cur) == CellKind::Room) break;
+        }
+    }
+}
+
+Flashlight Game::flashlight() const {
+    Flashlight f;
+    f.on = flashlightOn_;
+    const Vec3 R = camera_.right(), U = camera_.up(), F = camera_.forward();
+    // under the barrel, just past the muzzle, aimed where the crosshair looks at ~8 m
+    f.position = camera_.position + R * 0.15f + U * -0.13f + F * 0.55f;
+    f.direction = normalize(camera_.position + F * 8.0f - f.position);
+    f.intensity = 46.0f;
+    f.cosInner = std::cos(9.0f * kPi / 180.0f);
+    f.cosOuter = std::cos(24.0f * kPi / 180.0f);
+    return f;
+}
 
 void Game::update(float dt, const InputState& in) {
     const float sens = 0.0022f;
@@ -52,10 +163,18 @@ void Game::update(float dt, const InputState& in) {
     Vec2 p{camera_.position.x, camera_.position.z};
     Vec2 np = level_.collision.move(p, velocity_ * dt, kPlayerRadius, doorOpen_);
     float moved = length(np - p);
-    bob_ += moved / 0.75f * kPi;
+    // one vertical bob per footstep, at about two steps a second
+    float spd = length(velocity_);
+    float stepLength = std::max(0.6f, spd / stepRate(spd));
+    bob_ += moved / stepLength * kPi;
     bobAmount_ += ((wl > 0 ? 1.0f : 0.0f) - bobAmount_) * std::min(1.0f, dt * 6.0f);
-    camera_.position = {np.x, kEyeHeight + 0.025f * bobAmount_ * std::sin(2.0f * bob_), np.y};
+    float amp = in.run ? 0.03f : 0.022f;
+    Vec2 side = right * (0.012f * bobAmount_ * std::sin(bob_));
+    camera_.position = {np.x + side.x, kEyeHeight + amp * bobAmount_ * std::sin(2.0f * bob_), np.y + side.y};
     updateDoors(dt);
+    time_ += dt;
+    updateLighting();
+    reveal();
 }
 
 float Game::walkDuration() const { return kStartPause + walk_.length() / kWalkSpeed + kEndPause; }
@@ -71,8 +190,13 @@ void Game::setWalkTime(float t) {
     camera_.pitch = -0.035f;
     float walking = (s > 0.0f && s < walk_.length()) ? 1.0f : 0.0f;
     bobAmount_ = walking;
-    bob_ = s / 0.75f * kPi;
-    camera_.position = {p.x, kEyeHeight + 0.02f * walking * std::sin(2.0f * bob_), p.y};
+    bob_ = s / (kWalkSpeed / stepRate(kWalkSpeed)) * kPi;
+    Vec3 r = camera_.right();
+    float side = 0.012f * walking * std::sin(bob_);
+    camera_.position = {p.x + r.x * side, kEyeHeight + 0.022f * walking * std::sin(2.0f * bob_), p.y + r.z * side};
+    time_ = t;
+    updateLighting();
+    reveal();
 }
 
 void Game::updateDoors(float dt) {
@@ -110,7 +234,9 @@ void Game::buildInstances(std::vector<SceneInstance>& out, bool withGun) const {
                 o = o * o * (3.0f - 2.0f * o);
                 t = t * Mat4::translation(doorLeafOffset(kit_.parts()[part].name, o));
             }
-            out.push_back({part, t, 0});
+            Vec3 e = pm.cell >= 0 && size_t(pm.cell) < cellEmissive_.size() ? cellEmissive_[size_t(pm.cell)]
+                                                                            : Vec3{1, 1, 1};
+            out.push_back({part, t, 0, e});
         }
     }
     if (withGun && gunModel_ >= 0) {
@@ -186,13 +312,24 @@ std::vector<Shot> Game::findShots() const {
         for (const Room& r : m.rooms())
             if (!best || r.w * r.h > best->w * best->h) best = &r;
         if (best) {
-            Camera cam;
-            Vec3 c0 = cellCenter(best->x, best->y + best->h - 1) + Vec3{-0.9f, 0, 0.9f};
-            Vec3 c1 = cellCenter(best->x + best->w - 1, best->y);
-            cam.position = {c0.x, kEyeHeight, c0.z};
-            cam.yaw = yawToward(cam.position, c1);
-            cam.pitch = -0.08f;
-            shots.push_back({"room", cam});
+            // from a corner that is clear of props, toward the opposite corner
+            const std::vector<float> closed(level_.doors.size(), 0.0f);
+            const int x0 = best->x, x1 = best->x + best->w - 1, y0 = best->y, y1 = best->y + best->h - 1;
+            const struct {
+                Int2 from, to;
+                float sx, sz;
+            } corners[] = {{{x0, y1}, {x1, y0}, -1, 1}, {{x1, y0}, {x0, y1}, 1, -1},
+                           {{x0, y0}, {x1, y1}, -1, -1}, {{x1, y1}, {x0, y0}, 1, 1}};
+            for (const auto& k : corners) {
+                Vec3 c0 = cellCenter(k.from) + Vec3{0.9f * k.sx, 0, 0.9f * k.sz};
+                if (level_.collision.overlaps({c0.x, c0.z}, 0.35f, closed)) continue;
+                Camera cam;
+                cam.position = {c0.x, kEyeHeight, c0.z};
+                cam.yaw = yawToward(cam.position, cellCenter(k.to));
+                cam.pitch = -0.08f;
+                shots.push_back({"room", cam});
+                break;
+            }
         }
     }
     // junction: look into a cross or tee from a neighbouring corridor cell
@@ -217,6 +354,37 @@ std::vector<Shot> Game::findShots() const {
                 }
             }
         if (bestOpen > 0) shots.push_back({"junction", cam});
+    }
+    // one corridor per mood: the longest straight run of corridor cells inside that mood
+    const Sections& sec = level_.sections;
+    for (int mi = 0; mi < kMoodCount; ++mi) {
+        const Mood mood = Mood(mi);
+        auto inMood = [&](Int2 c) { return m.kind(c) == CellKind::Corridor && sec.moodAt(c) == mood; };
+        int best = 0;
+        Camera cam;
+        for (int y = 0; y < m.height(); ++y)
+            for (int x = 0; x < m.width(); ++x) {
+                if (!inMood({x, y})) continue;
+                for (int di = 0; di < 4; ++di) {
+                    Dir d = Dir(di);
+                    // start of a run: nothing in this mood straight behind
+                    if (passable({x, y}, opposite(d)) && inMood(step({x, y}, opposite(d)))) continue;
+                    int run = 1;
+                    Int2 c{x, y};
+                    while (passable(c, d) && inMood(step(c, d))) {
+                        c = step(c, d);
+                        ++run;
+                    }
+                    if (run > best) {
+                        best = run;
+                        Vec3 p = cellCenter(x, y) - dirVector(d) * 0.4f;
+                        cam.position = {p.x, kEyeHeight, p.z};
+                        cam.yaw = yawFor(d);
+                        cam.pitch = -0.03f;
+                    }
+                }
+            }
+        if (best >= 2) shots.push_back({"corridor_" + std::string(toString(mood)), cam});
     }
     return shots;
 }

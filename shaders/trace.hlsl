@@ -8,6 +8,14 @@
 //   glossy reflection       -> one ray around the mirror direction, rough surfaces skip it
 // Results accumulate over frames: temporal reprojection in the window, a fixed-camera
 // average in captures. With RT off: unshadowed direct light plus a flat ambient term.
+//
+// Round 5 (mood):
+//   lights          radiance comes per frame (flicker, dead, emergency); emissive surfaces
+//                   are scaled per instance by the power of their cell
+//   wear            procedural grime, rust streaks and dull patches, from each cell's decay
+//   flashlight      a shadowed spot light under the gun barrel
+//   haze            single scattering along the primary ray: one fixture sample (uniform
+//                   distance) and one flashlight sample (equiangular), both shadowed
 
 #define MASK_WORLD 0x01
 #define MASK_GUN   0x02
@@ -17,7 +25,7 @@
 
 struct Vertex { float3 pos; float3 nrm; };
 struct Submesh { uint firstIndex; uint baseVertex; uint material; uint pad; };
-struct InstInfo { uint firstSubmesh; uint flags; uint pad0; uint pad1; };
+struct InstInfo { uint firstSubmesh; uint flags; uint pad0; uint pad1; float4 emissive; };
 struct Material { float4 baseAlpha; float4 emissiveRough; float4 metalPad; };
 struct Light { float4 posRadius; float4 radianceRange; };
 
@@ -35,6 +43,10 @@ cbuffer Frame : register(b0)
     float4 jitter;      // xy subpixel jitter (pixels), z frame seed, w history mode
     float4 grid;        // grid w, grid h, cell size, light count
     float4 options;     // x RT on, y ambient, z max history, w unused
+    float4 flashPos;    // xyz position, w intensity (W/sr, 0 = off)
+    float4 flashDir;    // xyz direction, w cos(outer cone)
+    float4 flashCone;   // x cos(inner cone), y cos(spill edge), z range
+    float4 hazeParams;  // x density multiplier, y HG g, z time
 };
 
 RaytracingAccelerationStructure gScene : register(t0);
@@ -50,6 +62,7 @@ Texture2D<float4>          gPrevAccum  : register(t9);
 Texture2D<float4>          gPrevPos    : register(t10);
 RWTexture2D<float4>        gAccum      : register(u0);
 RWTexture2D<float4>        gPos        : register(u1);
+StructuredBuffer<float4>   gCellInfo   : register(t11);  // per cell: decay, haze, mood
 
 // ---------------------------------------------------------------------------
 // Random numbers
@@ -98,6 +111,7 @@ struct Hit
     uint material;
     uint instance;
     uint flags;
+    float3 emis;  // instance emissive multiplier
 };
 
 Hit makeHit(float3 o, float3 d, float t, uint inst, uint geom, uint prim, float2 bary, float3x4 o2w)
@@ -109,6 +123,7 @@ Hit makeHit(float3 o, float3 d, float t, uint inst, uint geom, uint prim, float2
     h.instance = inst;
     InstInfo ii = gInst[inst];
     h.flags = ii.flags;
+    h.emis = ii.emissive.rgb;
     Submesh sm = gSubmeshes[ii.firstSubmesh + geom];
     h.material = sm.material;
     uint base = sm.firstIndex + prim * 3;
@@ -201,6 +216,96 @@ Surface surface(uint m)
     return s;
 }
 
+// ---------------------------------------------------------------------------
+// Cells: wear and haze, blended bilinearly between cell centres
+// ---------------------------------------------------------------------------
+float4 cellAt(int2 c)
+{
+    c = clamp(c, int2(0, 0), int2(grid.xy) - 1);
+    return gCellInfo[c.y * int(grid.x) + c.x];
+}
+
+float4 cellInfo(float3 P)
+{
+    float2 g = P.xz / grid.z;   // cell centres sit on integer coordinates
+    float2 b = floor(g);
+    float2 t = g - b;
+    int2 i = int2(b);
+    float4 a = lerp(cellAt(i), cellAt(i + int2(1, 0)), t.x);
+    float4 c = lerp(cellAt(i + int2(0, 1)), cellAt(i + int2(1, 1)), t.x);
+    return lerp(a, c, t.y);
+}
+
+uint hash3(int3 p)
+{
+    uint h = uint(p.x) * 73856093u ^ uint(p.y) * 19349663u ^ uint(p.z) * 83492791u;
+    h ^= h >> 16;
+    h *= 0x7feb352du;
+    h ^= h >> 15;
+    h *= 0x846ca68bu;
+    h ^= h >> 16;
+    return h;
+}
+float h01(int3 p) { return float(hash3(p) >> 8) * (1.0 / 16777216.0); }
+
+float vnoise(float3 p)
+{
+    float3 b = floor(p);
+    float3 f = p - b;
+    f = f * f * (3.0 - 2.0 * f);
+    int3 i = int3(b);
+    float x00 = lerp(h01(i), h01(i + int3(1, 0, 0)), f.x);
+    float x10 = lerp(h01(i + int3(0, 1, 0)), h01(i + int3(1, 1, 0)), f.x);
+    float x01 = lerp(h01(i + int3(0, 0, 1)), h01(i + int3(1, 0, 1)), f.x);
+    float x11 = lerp(h01(i + int3(0, 1, 1)), h01(i + int3(1, 1, 1)), f.x);
+    return lerp(lerp(x00, x10, f.y), lerp(x01, x11, f.y), f.z);
+}
+
+float fbm(float3 p)
+{
+    return 0.5 * vnoise(p) + 0.3 * vnoise(p * 2.03 + 17.1) + 0.2 * vnoise(p * 4.11 + 3.7);
+}
+
+// Grime patches, rust streaks running down walls, soot on ceilings, dirt on floors.
+// decay 0 = factory clean, 1 = derelict.
+void applyWear(inout Surface s, float3 P, float3 N, float decay)
+{
+    if (decay < 0.02 || s.alpha < 1.0) return;
+    float big = fbm(P * 0.9);
+    float fine = vnoise(P * 3.7);
+    float cover = saturate(((big * 0.75 + fine * 0.25) - (1.0 - decay) * 0.72) * 2.4);
+    if (N.y > 0.6) cover = saturate(cover * 1.35 + decay * 0.15);   // floors collect dirt
+    if (N.y < -0.6) cover = saturate(cover * 1.15);                  // soot on ceilings
+    float streak = 0.0;
+    if (abs(N.y) < 0.5)
+    {
+        // vertically stretched noise: narrow drips and rust runs, broken up along their length
+        float3 q = float3((P.x + P.z) * 13.0, P.y * 0.55, (P.x - P.z) * 1.3);
+        float runs = saturate((vnoise(q) - 0.6) * 5.0);
+        float breakup = smoothstep(0.3, 0.7, vnoise(float3(P.x * 2.1, P.y * 2.6, P.z * 2.1) + 5.3));
+        streak = runs * breakup * saturate(decay * 1.5 - 0.25) * (0.6 + 0.4 * fine);
+    }
+    const float3 grime = float3(0.05, 0.045, 0.038);
+    const float3 rust = float3(0.21, 0.09, 0.035);
+    s.albedo *= lerp(1.0, 0.7, decay);  // everything goes dingy
+    s.albedo = lerp(s.albedo, grime * (0.7 + 0.6 * fine), cover * 0.85);
+    s.albedo = lerp(s.albedo, rust * (0.7 + 0.6 * fine), streak * 0.85);
+    float dull = saturate(cover + streak * 0.7);
+    s.roughness = lerp(s.roughness, 0.92, dull);
+    s.metallic *= 1.0 - dull * 0.8;
+    s.emissive *= lerp(1.0, 0.7, decay);  // dirty lenses
+}
+
+// The surface at a hit: material, the instance's power, and wear (not on the gun).
+Surface surfaceAt(Hit h)
+{
+    Surface s = surface(h.material);
+    s.emissive *= h.emis;
+    if (!(h.flags & FLAG_GUN))
+        applyWear(s, h.P, h.N, cellInfo(h.P).x);
+    return s;
+}
+
 float3 fresnel(float3 f0, float c) { return f0 + (1.0 - f0) * pow(1.0 - saturate(c), 5.0); }
 
 float3 brdf(float3 N, float3 V, float3 L, Surface s, bool specular)
@@ -236,6 +341,7 @@ float3 directLight(float3 P, float3 N, float3 V, Surface s, bool shadows, bool s
         for (uint i = 0; i < range.y; ++i)
         {
             Light light = gLights[gCellLights[range.x + i]];
+            if (dot(light.radianceRange.rgb, float3(1, 1, 1)) <= 1e-4) continue;  // dead fixture
             float3 lp = light.posRadius.xyz;
             if (shadows) lp += sphereSample(seed) * light.posRadius.w;
             float3 toL = lp - P;
@@ -256,13 +362,44 @@ float3 directLight(float3 P, float3 N, float3 V, Surface s, bool shadows, bool s
     return sum;
 }
 
-// Radiance leaving a surface hit by a secondary ray (no shadows, diffuse only: cheap).
+// Spot cone weight of the flashlight toward direction -L (from the light to the point).
+float flashSpot(float3 L)
+{
+    float c = dot(-L, flashDir.xyz);
+    return smoothstep(flashDir.w, flashCone.x, c) * 0.93 + 0.07 * smoothstep(flashCone.y, flashDir.w, c);
+}
+
+static const float3 kFlashColor = float3(1.0, 0.95, 0.88);
+
+float3 flashLight(float3 P, float3 N, float3 V, Surface s, bool shadows, bool specular)
+{
+    if (flashPos.w <= 0.0) return 0;
+    float3 toL = flashPos.xyz - P;
+    float d2 = dot(toL, toL);
+    float d = sqrt(d2);
+    float3 L = toL / d;
+    float NdotL = dot(N, L);
+    if (NdotL <= 0.0) return 0;
+    float spot = flashSpot(L);
+    if (spot <= 0.0) return 0;
+    float x = d / flashCone.z;
+    float win = saturate(1.0 - x * x * x * x);
+    win *= win;
+    if (win <= 0.0) return 0;
+    if (shadows && occluded(P + N * 0.004, L, d - 0.02)) return 0;
+    float3 E = kFlashColor * flashPos.w * spot * win / max(d2, 0.04) * NdotL;
+    return E * brdf(N, V, L, s, specular);
+}
+
+// Radiance leaving a surface hit by a secondary ray (no shadows from fixtures, diffuse
+// only: cheap). The flashlight is shadowed, or its light would leak through walls.
 float3 bounceRadiance(Hit h, float3 dir, float clampTo, inout uint seed)
 {
     if (!h.hit) return options.y;
     if (!h.front) return 0;  // inside the back of a wall
-    Surface s = surface(h.material);
+    Surface s = surfaceAt(h);
     float3 L = s.emissive + directLight(h.P, h.N, -dir, s, false, false, seed) + s.albedo * options.y;
+    L += flashLight(h.P, h.N, -dir, s, true, false);
     // Small, very bright emitters (light panels) found by a random secondary ray are
     // fireflies at low sample counts: clamp what one path can carry.
     return min(L, clampTo);
@@ -270,12 +407,13 @@ float3 bounceRadiance(Hit h, float3 dir, float clampTo, inout uint seed)
 
 float3 shade(Hit h, float3 dir, inout uint seed)
 {
-    Surface s = surface(h.material);
+    Surface s = surfaceAt(h);
     float3 V = -dir;
     float3 N = h.N;
     bool rt = options.x > 0.5;
     float3 c = s.emissive;
     c += directLight(h.P, N, V, s, rt, true, seed);
+    c += flashLight(h.P, N, V, s, rt, true);
     if (!rt)
         return c + s.albedo * 0.035 * (1.0 - s.metallic) + options.y;
 
@@ -306,6 +444,109 @@ float3 shade(Hit h, float3 dir, inout uint seed)
 }
 
 // ---------------------------------------------------------------------------
+// Haze: single scattering along the primary ray
+// ---------------------------------------------------------------------------
+float hgPhase(float c)
+{
+    float g = hazeParams.y;
+    float d = 1.0 + g * g - 2.0 * g * c;
+    return (1.0 - g * g) / (4.0 * PI * d * sqrt(d));
+}
+
+float lightWindow(float d, float range)
+{
+    float x = d / range;
+    float w = saturate(1.0 - x * x * x * x);
+    return w * w;
+}
+
+// Light scattered toward the camera by the haze between o and o + d * tEnd, and the
+// transmittance over that distance (for the surface behind it).
+float3 hazeInscatter(float3 o, float3 d, float tEnd, out float transmittance, inout uint seed)
+{
+    transmittance = 1.0;
+    if (hazeParams.x <= 0.0) return 0;
+    float sigma = 0.5 * (cellInfo(o).y + cellInfo(o + d * tEnd).y) * hazeParams.x;
+    transmittance = exp(-sigma * tEnd);
+    if (sigma <= 1e-6) return 0;
+    float3 L = 0;
+
+    // fixtures: two stratified distances along the ray; at each, one light from that
+    // point's 3x3 cells, chosen in proportion to its unshadowed contribution (weighted
+    // reservoir sampling), then one shadow ray to it
+    const int kHazeSteps = 2;
+    int gw = int(grid.x), gh = int(grid.y);
+    for (int k = 0; k < kHazeSteps; ++k)
+    {
+        float ts = (float(k) + rnd(seed)) / float(kHazeSteps) * tEnd;
+        float3 P = o + d * ts;
+        float sig = cellInfo(P).y * hazeParams.x;
+        if (sig <= 0.0) continue;
+        int2 cell = int2(floor(P.x / grid.z + 0.5), floor(P.z / grid.z + 0.5));
+        float wsum = 0.0, wPick = 0.0;
+        float3 cPick = 0, lPick = 0;
+        for (int dy = -1; dy <= 1; ++dy)
+        for (int dx = -1; dx <= 1; ++dx)
+        {
+            int2 c = cell + int2(dx, dy);
+            if (c.x < 0 || c.y < 0 || c.x >= gw || c.y >= gh) continue;
+            uint2 range = gCells[c.y * gw + c.x];
+            for (uint i = 0; i < range.y; ++i)
+            {
+                Light light = gLights[gCellLights[range.x + i]];
+                float3 toL = light.posRadius.xyz - P;
+                float dd2 = dot(toL, toL);
+                float dl = sqrt(dd2);
+                float3 contrib = light.radianceRange.rgb * lightWindow(dl, light.radianceRange.w) / max(dd2, 0.3) *
+                                 hgPhase(dot(toL / dl, d));
+                float w = dot(contrib, float3(0.2126, 0.7152, 0.0722));
+                if (w <= 1e-6) continue;
+                wsum += w;
+                if (rnd(seed) * wsum < w)
+                {
+                    wPick = w;
+                    cPick = contrib;
+                    lPick = light.posRadius.xyz;
+                }
+            }
+        }
+        if (wsum <= 0.0) continue;
+        float3 toL = lPick - P;
+        float dl = length(toL);
+        if (occluded(P, toL / dl, dl - 0.05)) continue;
+        float3 s = sig * exp(-sigma * ts) * cPick * (wsum / wPick) * (tEnd / float(kHazeSteps));
+        L += min(s, 1.2);
+    }
+
+    // flashlight: equiangular sampling around the beam's origin
+    if (flashPos.w > 0.0)
+    {
+        float3 lp = flashPos.xyz;
+        float delta = dot(lp - o, d);
+        float D = max(length(o + d * delta - lp), 0.03);
+        // the ray only enters the cone a little past the light: start sampling there
+        float tA = min(max(0.0, delta + 0.4), tEnd);
+        float thA = atan2(tA - delta, D), thB = atan2(tEnd - delta, D);
+        float t = D * tan(lerp(thA, thB, rnd(seed)));
+        float ts = clamp(delta + t, tA, tEnd);
+        float3 P = o + d * ts;
+        float3 toL = lp - P;
+        float dl = max(length(toL), 0.01);
+        float3 Ld = toL / dl;
+        float spot = flashSpot(Ld);
+        float sig = cellInfo(P).y * hazeParams.x;
+        float win = lightWindow(dl, flashCone.z);
+        if (spot > 0.0 && sig > 0.0 && win > 0.0 && !occluded(P, Ld, dl - 0.02))
+        {
+            // the 1/d^2 falloff cancels against the equiangular pdf
+            float w = (thB - thA) / D;
+            L += min(sig * exp(-sigma * ts) * hgPhase(dot(Ld, d)) * kFlashColor * flashPos.w * spot * win * w, 1.5);
+        }
+    }
+    return L;
+}
+
+// ---------------------------------------------------------------------------
 [numthreads(8, 8, 1)]
 void CSMain(uint3 id : SV_DispatchThreadID)
 {
@@ -323,6 +564,7 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     float3 throughput = 1;
     float4 posId = float4(0, 0, 0, 0);
     uint firstFlags = 0;
+    float firstT = 60.0;
     for (int layer = 0; layer < 3; ++layer)
     {
         Hit h = traceCulled(origin, dir, 200.0, 0xFF);
@@ -337,8 +579,9 @@ void CSMain(uint3 id : SV_DispatchThreadID)
             // integer is a denormal, which the store flushes to zero
             posId = float4(h.P, float(h.instance + 1u));
             firstFlags = h.flags;
+            firstT = min(h.t, 60.0);
         }
-        Surface s = surface(h.material);
+        Surface s = surfaceAt(h);
         if (s.alpha < 1.0)
         {
             // glass: a little reflected light and tint, then continue through
@@ -353,6 +596,12 @@ void CSMain(uint3 id : SV_DispatchThreadID)
         }
         radiance += throughput * shade(h, dir, seed);
         break;
+    }
+    if (options.x > 0.5 && !(firstFlags & FLAG_GUN))
+    {
+        float T;
+        float3 ins = hazeInscatter(camPos.xyz, dir, firstT, T, seed);
+        radiance = radiance * T + ins;
     }
     radiance = min(radiance, 64.0);  // tame fireflies
 

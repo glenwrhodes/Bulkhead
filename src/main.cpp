@@ -35,6 +35,8 @@ using namespace bh;
 namespace {
 
 constexpr uint64_t kDefaultSeed = 1234;
+constexpr int kGameMapCellPx = 32;   // the in-game map texture (minimap and M map)
+constexpr float kShotTime = 4.0f;    // light flicker clock for the still shots
 
 MazeParams mazeParams(const Options& o, uint64_t seed) {
     MazeParams mp;
@@ -44,11 +46,33 @@ MazeParams mazeParams(const Options& o, uint64_t seed) {
     return mp;
 }
 
-OverheadMap overheadFor(const Maze& maze, const Options& o) {
+OverheadMap overheadFor(const Maze& maze, const Sections& sections, int cellPx) {
     OverheadStyle style;
-    style.cellPx = o.cellPx;
-    style.marginPx = o.cellPx / 2;
+    style.cellPx = cellPx;
+    style.marginPx = cellPx / 2;
+    style.sections = &sections;
     return renderOverheadMap(maze, style);
+}
+
+OverheadMap gameMap(const Game& game) { return overheadFor(game.maze(), game.level().sections, kGameMapCellPx); }
+
+void uploadMap(Renderer& renderer, const OverheadMap& map) {
+    renderer.setMapImage(map.image, map.cellPx, map.marginPx);
+}
+
+// Per-frame state the renderer takes from the game: light flicker, the flashlight, the
+// cells seen so far (for the map).
+void applyGame(FrameSettings& s, const Game& game, const Options& o) {
+    s.lightRadiance = &game.lightRadiance();
+    const Flashlight f = game.flashlight();
+    s.flashlight = f.on;
+    s.flashPos = f.position;
+    s.flashDir = f.direction;
+    s.flashIntensity = f.intensity;
+    s.flashCosInner = f.cosInner;
+    s.flashCosOuter = f.cosOuter;
+    s.explored = &game.explored();
+    s.haze = o.haze;
 }
 
 Vec2 mapUV(const OverheadMap& map, Vec3 p) {
@@ -65,11 +89,38 @@ void loadKit(Kit& kit, const Options& o) {
               kit.materials().size(), fs::absolute(dir).string());
 }
 
+void describeSections(const Maze& maze, const Sections& sec) {
+    int sections[kMoodCount]{}, cells[kMoodCount]{};
+    for (Mood m : sec.mood) ++sections[int(m)];
+    for (int y = 0; y < maze.height(); ++y)
+        for (int x = 0; x < maze.width(); ++x)
+            if (maze.kind(x, y) != CellKind::Void) ++cells[int(sec.moodAt(x, y))];
+    std::string parts;
+    for (int i = 0; i < kMoodCount; ++i)
+        parts += std::format("{}{} {} ({} cells)", i ? ", " : "", sections[i], toString(Mood(i)), cells[i]);
+    log::info("Sections: {}: {}", sec.count(), parts);
+}
+
 void describe(const Game& game) {
     const Level& l = game.level();
     log::info("Maze {}", game.maze().describe());
     log::info("Level: {} placed models, {} doors, {} lights, {} props, walk {:.1f} m ({:.1f} s)", l.placed.size(),
               l.doors.size(), l.lights.size(), l.propCount, game.walk().length(), game.walkDuration());
+    describeSections(game.maze(), l.sections);
+    // which moods the scripted walk passes through, and when
+    std::string timeline;
+    const WalkPath& w = game.walk();
+    int current = -1;
+    for (float s = 0.0f; s <= w.length(); s += 0.5f) {
+        Vec2 p = w.at(s);
+        Mood m = l.sections.moodAt(int(std::floor(p.x / kCell + 0.5f)), int(std::floor(p.y / kCell + 0.5f)));
+        if (int(m) != current) {
+            current = int(m);
+            timeline += std::format("{}{:.1f}s {}", timeline.empty() ? "" : ", ", Game::kStartPause + s / Game::kWalkSpeed,
+                                    toString(m));
+        }
+    }
+    log::info("Walk moods: {}", timeline);
     for (const std::string& m : l.missingModels) log::warn("kit has no model '{}'", m);
 }
 
@@ -98,7 +149,9 @@ int runOverhead(const Options& o) {
     const Maze maze = Maze::generate(mazeParams(o, o.seed.value_or(kDefaultSeed)));
     log::info("Maze {}", maze.describe());
     log::info("\n{}", maze.toAscii());
-    const OverheadMap map = overheadFor(maze, o);
+    const Sections sections = buildSections(maze);
+    describeSections(maze, sections);
+    const OverheadMap map = overheadFor(maze, sections, o.cellPx);
     if (o.output.has_parent_path()) fs::create_directories(o.output.parent_path());
     if (!map.image.writePng(o.output)) {
         log::error("Could not write {}", o.output.string());
@@ -118,9 +171,10 @@ int runCapture(const Options& o) {
     Kit kit;
     loadKit(kit, o);
     Game game(kit, mazeParams(o, seed));
+    game.setFlashlight(o.flashlight);
     describe(game);
-    const OverheadMap map = overheadFor(game.maze(), o);
-    map.image.writePng(dir / "overhead.png");
+    overheadFor(game.maze(), game.level().sections, o.cellPx).image.writePng(dir / "overhead.png");
+    const OverheadMap map = gameMap(game);
 
     const float dt = 1.0f / float(o.fps);
     const int frames = o.frames > 0 ? o.frames : int(std::ceil((game.walkDuration() - o.start) * float(o.fps)));
@@ -129,11 +183,11 @@ int runCapture(const Options& o) {
 
     Gpu gpu(o.debugLayer);
     Renderer renderer(gpu, nullptr, uint32_t(o.width), uint32_t(o.height));
-    renderer.setMapImage(map.image);
+    uploadMap(renderer, map);
     renderer.setKit(kit);
     renderer.setLevel(game.level());
 
-    // let the doors catch up with a late start
+    // let the doors (and the explored map) catch up with a late start
     for (float t = 0.0f; t < o.start; t += dt) {
         game.setWalkTime(t);
         game.updateDoors(dt);
@@ -165,6 +219,7 @@ int runCapture(const Options& o) {
         s.time = t;
         s.playerMapUV = mapUV(map, game.camera().position);
         s.exitFlash = exitFlash * exitFlash;
+        applyGame(s, game, o);
         const fs::path file = dir / std::format("frame_{:04}.png", i + 1);
         pending.push_back(std::async(std::launch::async,
                                      [img = renderer.renderToImage(instances, s), file] { return img.writePng(file); }));
@@ -205,21 +260,27 @@ int runShots(const Options& o) {
     Kit kit;
     loadKit(kit, o);
     Game game(kit, mazeParams(o, seed));
+    game.setFlashlight(o.flashlight);
     describe(game);
-    const OverheadMap map = overheadFor(game.maze(), o);
-    map.image.writePng(dir / "overhead.png");
+    overheadFor(game.maze(), game.level().sections, o.cellPx).image.writePng(dir / "overhead.png");
+    const OverheadMap map = gameMap(game);
 
     Gpu gpu(o.debugLayer);
     Renderer renderer(gpu, nullptr, uint32_t(o.width), uint32_t(o.height));
-    renderer.setMapImage(map.image);
+    uploadMap(renderer, map);
     renderer.setKit(kit);
     renderer.setLevel(game.level());
 
     std::vector<SceneInstance> instances;
     for (const Shot& shot : game.findShots()) {
         game.setCamera(shot.camera);
+        game.setTime(kShotTime);
         game.openDoorsNear(shot.camera.position, shot.name == "room" ? 3.0f : 0.0f);
         game.buildInstances(instances);
+        const Int2 cell = game.cameraCell();
+        log::info("Shot {}: cell ({}, {}), {} section, lights {}", shot.name, cell.x, cell.y,
+                  toString(game.moodAtCamera()),
+                  toString(game.level().sections.power[size_t(cell.y * game.maze().width() + cell.x)].mode));
         for (bool rt : {true, false}) {
             FrameSettings s;
             s.camera = shot.camera;
@@ -228,6 +289,9 @@ int runShots(const Options& o) {
             s.minimap = false;
             s.exposure = o.exposure;
             s.samples = std::max(2, o.spp);
+            s.time = kShotTime;
+            applyGame(s, game, o);
+            s.explored = nullptr;
             const Image img = renderer.renderToImage(instances, s);
             const fs::path file = dir / std::format("shot_{}_{}.png", shot.name, rt ? "rt" : "nort");
             if (!img.writePng(file)) {
@@ -250,18 +314,22 @@ int runBench(const Options& o) {
     Kit kit;
     loadKit(kit, o);
     Game game(kit, mazeParams(o, o.seed.value_or(kDefaultSeed)));
+    game.setFlashlight(o.flashlight);
     describe(game);
-    const OverheadMap map = overheadFor(game.maze(), o);
+    const OverheadMap map = gameMap(game);
     Gpu gpu(o.debugLayer);
     Renderer renderer(gpu, nullptr, uint32_t(o.width), uint32_t(o.height));
-    renderer.setMapImage(map.image);
+    uploadMap(renderer, map);
     renderer.setKit(kit);
     renderer.setLevel(game.level());
 
     const float dt = 1.0f / 60.0f;
-    const int frames = o.frames > 0 ? o.frames : 600;
+    // default: the whole walk from the start time to the exit
+    const int frames = o.frames > 0 ? o.frames : std::max(1, int(std::ceil((game.walkDuration() - o.start) / dt)));
+    const int saveEvery = frames > 1200 ? 300 : 120;
     std::vector<SceneInstance> instances;
     std::vector<double> ms;
+    std::vector<double> byMood[kMoodCount];
     for (int i = 0; i < frames; ++i) {
         const float t = o.start + float(i) * dt;
         game.setWalkTime(t);
@@ -272,26 +340,39 @@ int runBench(const Options& o) {
         s.rayTracing = o.rayTracing;
         s.hud = o.hud;
         s.exposure = o.exposure;
+        s.time = t;
         s.playerMapUV = mapUV(map, game.camera().position);
         s.resetHistory = i == 0;
+        applyGame(s, game, o);
+        s.maxHistory = game.lightingChange() > 0.15f ? 3 : 16;
         const auto a = std::chrono::steady_clock::now();
-        if ((i + 1) % 120 == 0) {
-            renderer.renderToImage(instances, s).writePng(dir / std::format("frame_{:04}.png", i + 1));
+        const bool last = i + 1 == frames;
+        if ((i + 1) % saveEvery == 0 || last) {
+            const Image img = renderer.renderToImage(instances, s);
+            img.writePng(dir / std::format("frame_{:04}.png", i + 1));
+            if (last) img.writePng(dir / "frame_final.png");
         } else {
             renderer.render(instances, s);
             renderer.gpuIdle();
         }
-        ms.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - a).count());
+        const double frameMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - a).count();
+        ms.push_back(frameMs);
+        byMood[int(game.moodAtCamera())].push_back(frameMs);
     }
-    std::vector<double> sorted = ms;
-    std::sort(sorted.begin(), sorted.end());
-    double avg = 0;
-    for (double v : ms) avg += v;
-    avg /= double(ms.size());
-    log::info("Bench {}x{} RT {}: {} frames, average {:.2f} ms ({:.0f} fps), median {:.2f} ms, 95th {:.2f} ms, "
-              "worst {:.2f} ms (every 120th frame also reads back and saves a PNG)",
-              o.width, o.height, o.rayTracing ? "on" : "off", ms.size(), avg, 1000.0 / avg,
-              sorted[sorted.size() / 2], sorted[sorted.size() * 95 / 100], sorted.back());
+    auto report = [&](const std::string& label, std::vector<double> v) {
+        if (v.empty()) return;
+        std::sort(v.begin(), v.end());
+        double avg = 0;
+        for (double x : v) avg += x;
+        avg /= double(v.size());
+        log::info("{}: {} frames, average {:.2f} ms ({:.0f} fps), median {:.2f} ms, 95th {:.2f} ms, worst {:.2f} ms",
+                  label, v.size(), avg, 1000.0 / avg, v[v.size() / 2], v[v.size() * 95 / 100], v.back());
+    };
+    report(std::format("Bench {}x{} RT {} flashlight {}", o.width, o.height, o.rayTracing ? "on" : "off",
+                       o.flashlight ? "on" : "off"),
+           ms);
+    for (int m = 0; m < kMoodCount; ++m) report(std::format("  in {} sections", toString(Mood(m))), byMood[m]);
+    log::info("(every {}th frame and the last also read back and save a PNG, which shows in 'worst')", saveEvery);
     log::setFile({});
     return 0;
 }
@@ -314,11 +395,13 @@ int runInteractive(const Options& o) {
 
     std::unique_ptr<Game> game;
     OverheadMap map;
+    bool flashlight = o.flashlight;
     auto newShip = [&] {
         game = std::make_unique<Game>(kit, mazeParams(o, seed));
+        game->setFlashlight(flashlight);
         describe(*game);
-        map = overheadFor(game->maze(), o);
-        renderer.setMapImage(map.image);
+        map = gameMap(*game);
+        uploadMap(renderer, map);
         renderer.setLevel(game->level());
     };
     newShip();
@@ -336,6 +419,9 @@ int runInteractive(const Options& o) {
             reset = true;
         } else if (key == 'H') {
             hud = !hud;
+        } else if (key == 'F') {
+            flashlight = !flashlight;
+            game->setFlashlight(flashlight);
         } else if (key == 'N') {
             nextSeed = true;
         } else if (key == VK_F12) {
@@ -393,6 +479,9 @@ int runInteractive(const Options& o) {
         s.exitFlash = exitFlash;
         s.playerMapUV = mapUV(map, game->camera().position);
         s.resetHistory = reset;
+        applyGame(s, *game, o);
+        // flickering lights: keep only a few frames of history so the flicker stays sharp
+        s.maxHistory = game->lightingChange() > 0.15f ? 3 : 16;
         reset = false;
         renderer.renderAndPresent(instances, s);
 
@@ -414,9 +503,9 @@ int runInteractive(const Options& o) {
             fpsTimer = 0.0f;
             std::string status = escaped ? "  |  ESCAPED! N = new ship" : "";
             window.setTitle(std::format(
-                "Bulkhead  |  seed {}  |  RT {}  |  {:.0f} fps  |  WASD move, mouse look, Shift run, M map, R ray tracing, "
-                "H HUD, N new ship, Esc mouse{}",
-                seed, rt ? "ON" : "OFF", fps, status));
+                "Bulkhead  |  seed {}  |  RT {}  |  {:.0f} fps  |  {}  |  WASD move, mouse look, Shift run, F flashlight, "
+                "M map, R ray tracing, H HUD, N new ship, Esc mouse{}",
+                seed, rt ? "ON" : "OFF", fps, toString(game->moodAtCamera()), status));
         }
     }
     return 0;

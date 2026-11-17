@@ -15,6 +15,7 @@
 #include "world/OverheadMap.h"
 #include "world/PathTrack.h"
 #include "world/Random.h"
+#include "world/Sections.h"
 
 using namespace bh;
 
@@ -317,6 +318,156 @@ void testOverheadMap() {
     CHECK_MSG(colors.size() >= 12, std::format("overhead map has only {} colours", colors.size()));
 }
 
+// Problems with a ship's sections (empty = fine).
+std::vector<std::string> validateSections(const Maze& m, const Sections& s) {
+    std::vector<std::string> problems;
+    auto fail = [&](std::string p) { problems.push_back(std::move(p)); };
+    const int W = m.width(), H = m.height();
+    const size_t N = size_t(W) * size_t(H);
+    if (s.cellSection.size() != N || s.power.size() != N || s.decay.size() != N || s.haze.size() != N)
+        return {"per-cell arrays have the wrong size"};
+    if (s.anchor.size() != s.mood.size() || s.depth.size() != s.mood.size()) fail("per-section arrays differ in size");
+    std::vector<int> cells(s.mood.size(), 0);
+    for (int y = 0; y < H; ++y)
+        for (int x = 0; x < W; ++x) {
+            const int sec = s.sectionAt(x, y);
+            if (m.kind(x, y) == CellKind::Void) {
+                if (sec != -1) fail(std::format("void cell ({},{}) has a section", x, y));
+                continue;
+            }
+            if (sec < 0 || sec >= s.count()) {
+                fail(std::format("cell ({},{}) has no section", x, y));
+                continue;
+            }
+            ++cells[size_t(sec)];
+            const size_t i = size_t(y * W + x);
+            if (s.decay[i] < 0.0f || s.decay[i] > 1.0f || s.haze[i] < 0.0f) fail("decay or haze out of range");
+        }
+    for (int i = 0; i < s.count(); ++i)
+        if (cells[size_t(i)] == 0) fail(std::format("section {} is empty", i));
+    // a room is never split between sections
+    for (const Room& r : m.rooms())
+        for (int y = r.y; y < r.y + r.h; ++y)
+            for (int x = r.x; x < r.x + r.w; ++x)
+                if (s.sectionAt(x, y) != s.sectionAt(r.x, r.y)) fail(std::format("room {} is split", r.id));
+    // every section is one connected piece
+    for (int sec = 0; sec < s.count(); ++sec) {
+        const Int2 a = s.anchor[size_t(sec)];
+        if (s.sectionAt(a.x, a.y) != sec) {
+            fail(std::format("section {} does not contain its anchor", sec));
+            continue;
+        }
+        std::vector<char> seen(N, 0);
+        std::vector<Int2> stack{a};
+        seen[size_t(a.y * W + a.x)] = 1;
+        int reached = 0;
+        while (!stack.empty()) {
+            Int2 c = stack.back();
+            stack.pop_back();
+            ++reached;
+            for (int d = 0; d < 4; ++d) {
+                if (!m.passable(c.x, c.y, Dir(d))) continue;
+                Int2 n{c.x + kDx[d], c.y + kDy[d]};
+                if (s.sectionAt(n.x, n.y) != sec || seen[size_t(n.y * W + n.x)]) continue;
+                seen[size_t(n.y * W + n.x)] = 1;
+                stack.push_back(n);
+            }
+        }
+        if (reached != cells[size_t(sec)])
+            fail(std::format("section {} is in pieces ({} of {} cells reached)", sec, reached, cells[size_t(sec)]));
+    }
+    if (s.moodAt(m.startCell()) != Mood::Lit) fail("the start is not in a lit section");
+    if (m.exitRoom() >= 0) {
+        const Int2 e = m.exitCell();
+        if (s.power[size_t(e.y * W + e.x)].mode != LightMode::Emergency) fail("the exit airlock is not on emergency light");
+    }
+    return problems;
+}
+
+void testSections() {
+    struct Size {
+        int w, h, seeds;
+    };
+    const Size sizes[] = {{6, 6, 40}, {12, 12, 80}, {24, 24, 20}, {40, 40, 30}, {64, 48, 4}};
+    double depthSum[kMoodCount]{}, depthCount[kMoodCount]{};
+    double decaySum[kMoodCount]{}, decayCount[kMoodCount]{};
+    for (const Size& sz : sizes) {
+        int bad = 0, allMoods = 0;
+        for (int seed = 1; seed <= sz.seeds; ++seed) {
+            MazeParams p;
+            p.width = sz.w;
+            p.height = sz.h;
+            p.seed = uint64_t(seed);
+            const Maze m = Maze::generate(p);
+            const Sections s = buildSections(m);
+            const auto problems = validateSections(m, s);
+            if (!problems.empty() && bad++ < 3)
+                std::printf("  %dx%d seed %d: %s (+%zu more)\n", sz.w, sz.h, seed, problems[0].c_str(), problems.size() - 1);
+            bool has[kMoodCount]{};
+            for (int i = 0; i < s.count(); ++i) {
+                has[int(s.mood[size_t(i)])] = true;
+                depthSum[int(s.mood[size_t(i)])] += double(s.depth[size_t(i)]) / double(sz.w + sz.h);
+                depthCount[int(s.mood[size_t(i)])] += 1;
+            }
+            allMoods += has[0] && has[1] && has[2] && has[3];
+            for (int y = 0; y < m.height(); ++y)
+                for (int x = 0; x < m.width(); ++x)
+                    if (m.kind(x, y) != CellKind::Void) {
+                        decaySum[int(s.moodAt(x, y))] += s.decay[size_t(y * m.width() + x)];
+                        decayCount[int(s.moodAt(x, y))] += 1;
+                    }
+            if (sz.w == 40 && seed == 1)
+                std::printf("  40x40 seed 1: %d sections over %d walkable cells\n", s.count(),
+                            m.width() * m.height() - m.countCells(CellKind::Void));
+            if (sz.w == 40) CHECK_MSG(s.count() >= 10 && s.count() <= 30, std::format("40x40: {} sections", s.count()));
+        }
+        CHECK_MSG(bad == 0, std::format("{}x{}: {} of {} seeds have broken sections", sz.w, sz.h, bad, sz.seeds));
+        if (sz.w >= 24)
+            CHECK_MSG(allMoods == sz.seeds, std::format("{}x{}: only {} of {} ships have all four moods", sz.w, sz.h,
+                                                        allMoods, sz.seeds));
+    }
+    // deeper into the ship is darker; dirtier as it gets worse
+    auto avg = [](double s, double n) { return n > 0 ? s / n : 0.0; };
+    const double dLit = avg(depthSum[0], depthCount[0]), dDark = avg(depthSum[2], depthCount[2]);
+    std::printf("  mean section depth (per ship size): lit %.2f, dim %.2f, derelict %.2f, dark %.2f\n", dLit,
+                avg(depthSum[1], depthCount[1]), avg(depthSum[3], depthCount[3]), dDark);
+    CHECK(dLit < dDark);
+    CHECK(avg(decaySum[0], decayCount[0]) + 0.3 < avg(decaySum[3], decayCount[3]));
+
+    // same maze -> same sections
+    MazeParams p;
+    p.width = p.height = 40;
+    p.seed = 1234;
+    const Maze m = Maze::generate(p);
+    const Sections a = buildSections(m), b = buildSections(m);
+    CHECK(a.cellSection == b.cellSection && a.mood == b.mood && a.decay == b.decay);
+    CHECK(Maze::generate(p).hash() == m.hash());  // sections never touch the maze
+
+    // light behaviour
+    CellPower dead{LightMode::Dead, 1.0f, {1, 1, 1}, 0.3f};
+    CHECK(lightMultiplier(dead, 3.0f).x == 0.0f);
+    CellPower steady{LightMode::Steady, 0.5f, {1.0f, 0.5f, 0.25f}, 0.1f};
+    Vec3 k = lightMultiplier(steady, 7.0f);
+    CHECK(std::abs(k.x - 0.5f) < 1e-6f && std::abs(k.y - 0.25f) < 1e-6f);
+    CellPower flicker{LightMode::Flicker, 1.0f, {1, 1, 1}, 0.42f};
+    CellPower emergency{LightMode::Emergency, 1.0f, {1, 0.1f, 0.05f}, 0.0f};
+    int on = 0, off = 0;
+    float eLo = 9, eHi = 0;
+    for (int i = 0; i < 3600; ++i) {
+        const float t = float(i) / 60.0f;
+        float f = lightMultiplier(flicker, t).x;
+        on += f > 0.5f;
+        off += f < 0.1f;
+        float e = lightMultiplier(emergency, t).x;
+        eLo = std::min(eLo, e);
+        eHi = std::max(eHi, e);
+        CHECK(lightMultiplier(flicker, t).x == lightMultiplier(flicker, t).x);  // a pure function of t
+    }
+    std::printf("  flicker over 60 s: %d on, %d off frames; emergency pulse %.2f..%.2f\n", on, off, eLo, eHi);
+    CHECK(on > 2400 && off > 30);
+    CHECK(eLo > 0.3f && eHi > 0.9f);
+}
+
 void testPngRoundTrip() {
     Image img(37, 21, rgb(0x102030));
     img.fillRect(5, 5, 20, 15, rgb(0xff8800));
@@ -352,6 +503,7 @@ int main() {
         {"path edge cases", testPathEdgeCases},
         {"path track", testPathTrack},
         {"overhead map", testOverheadMap},
+        {"sections and moods", testSections},
         {"png round trip", testPngRoundTrip},
     };
     for (const Test& t : tests) {

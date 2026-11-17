@@ -36,10 +36,13 @@ function(bulkhead_png_test name label)
   set_tests_properties(${name}_check PROPERTIES LABELS ${label} FIXTURES_REQUIRED ${name})
 endfunction()
 
+# The ship is 40 x 40 cells; the overhead PNG is 64 px a cell plus a 32 px margin.
+set(MAP_PX 2624)
+
 # --- smoke ------------------------------------------------------------------
 bulkhead_png_test(overhead_map smoke
   GAME  --overhead "${CAP}/overhead_seed1234.png" --seed 1234
-  CHECK --file "${CAP}/overhead_seed1234.png" --width 832 --height 832)
+  CHECK --file "${CAP}/overhead_seed1234.png" --width ${MAP_PX} --height ${MAP_PX})
 
 bulkhead_png_test(capture_smoke smoke
   GAME  --capture "${CAP}/smoke" --frames 24 --res 640x360 --spp 2 --start 1.5 --seed 1234
@@ -62,26 +65,44 @@ bulkhead_png_test(bench smoke
 
 # Diagnostic: camera standing still (past the end of the walk), so temporal accumulation
 # should converge completely. Label "diag": not part of the normal runs.
-add_test(NAME bench_static COMMAND Bulkhead --bench "${CAP}/bench_static" --res 1280x720 --frames 240 --start 60 --seed 1234)
+add_test(NAME bench_static COMMAND Bulkhead --bench "${CAP}/bench_static" --res 1280x720 --frames 240 --start 1000 --seed 1234)
 set_tests_properties(bench_static PROPERTIES LABELS diag)
 
+# The timing run: window-mode rendering over the whole start -> exit walk of the 40 x 40
+# ship at 1080p, with frame times for each mood in captures/bench_walk/bench.log.
+# Label "bench": run it on its own (ctest -L bench).
+bulkhead_png_test(bench_walk bench
+  GAME  --bench "${CAP}/bench_walk" --res 1920x1080 --seed 1234
+  CHECK --file "${CAP}/bench_walk/frame_final.png" --width 1920 --height 1080)
+
 # --- film -------------------------------------------------------------------
-# The walk from start to exit, 1080p at 30 fps, through doors and rooms; plus the map.
+# The walk from start to exit, 1080p at 30 fps, in two halves (one ctest run is cut off
+# after 10 minutes; each half takes about 6). Seed 1234 passes lit, dim, lit, derelict
+# and dark sections (see "Walk moods" in capture.log).
 set(FILM_SEED 1234)
-bulkhead_png_test(film_walkthrough film
-  GAME  --capture "${CAP}/walkthrough" --res 1920x1080 --fps 30 --spp 12 --seed ${FILM_SEED}
-  CHECK --dir "${CAP}/walkthrough" --at-least 300 --width 1920 --height 1080 --expect-motion)
+bulkhead_png_test(film_walkthrough_a film
+  GAME  --capture "${CAP}/walkthrough_a" --res 1920x1080 --fps 30 --spp 12 --frames 3000 --seed ${FILM_SEED}
+  CHECK --dir "${CAP}/walkthrough_a" --count 3000 --width 1920 --height 1080 --expect-motion)
+bulkhead_png_test(film_walkthrough_b film
+  GAME  --capture "${CAP}/walkthrough_b" --res 1920x1080 --fps 30 --spp 12 --start 100 --seed ${FILM_SEED}
+  CHECK --dir "${CAP}/walkthrough_b" --at-least 2900 --width 1920 --height 1080 --expect-motion)
 bulkhead_png_test(film_overhead_walk film
   GAME  --overhead "${CAP}/walkthrough_overhead_seed${FILM_SEED}.png" --seed ${FILM_SEED}
-  CHECK --file "${CAP}/walkthrough_overhead_seed${FILM_SEED}.png" --width 832 --height 832)
+  CHECK --file "${CAP}/walkthrough_overhead_seed${FILM_SEED}.png" --width ${MAP_PX} --height ${MAP_PX})
 
-# Fixed views with ray tracing on and off, for side-by-side comparison.
+# Fixed views with ray tracing on and off, for side-by-side comparison: corridor, door,
+# room, junction, and one corridor in each mood (lit, dim, dark, derelict).
 bulkhead_png_test(film_shots film
   GAME  --shots "${CAP}/shots" --res 1920x1080 --spp 32 --seed ${FILM_SEED} --no-hud
   CHECK --file "${CAP}/shots/shot_room_rt.png" --width 1920 --height 1080)
+foreach(mood lit dim dark derelict)
+  add_test(NAME film_shots_${mood}_check COMMAND capture_check
+    --file "${CAP}/shots/shot_corridor_${mood}_rt.png" --width 1920 --height 1080)
+  set_tests_properties(film_shots_${mood}_check PROPERTIES LABELS film FIXTURES_REQUIRED film_shots)
+endforeach()
 
 foreach(seed 7 42 2026)
   bulkhead_png_test(film_overhead_${seed} film
     GAME  --overhead "${CAP}/overhead_seed${seed}.png" --seed ${seed}
-    CHECK --file "${CAP}/overhead_seed${seed}.png" --width 832 --height 832)
+    CHECK --file "${CAP}/overhead_seed${seed}.png" --width ${MAP_PX} --height ${MAP_PX})
 endforeach()
