@@ -32,24 +32,118 @@ int rotateMask(int mask, int quarterTurns) {
 
 class Builder {
 public:
-    Builder(const Maze& m, const Kit& k, Level& l) : maze(m), kit(k), level(l) {}
+    Builder(const Maze& m, const Kit& k, Level& l) : maze(m), kit(k), level(l), dress(m.params().seed, kDressStream) {}
 
-    int place(const char* name, Mat4 t, int door = -1) {
+    int place(const char* name, Mat4 t, int door = -1, bool selfPowered = false) {
         int idx = kit.find(name);
         if (idx < 0) {
             if (std::find(level.missingModels.begin(), level.missingModels.end(), name) == level.missingModels.end())
                 level.missingModels.push_back(name);
             return -1;
         }
-        level.placed.push_back({idx, t, door, cell});
+        level.placed.push_back({idx, t, door, cell, selfPowered});
         for (const KitLight& l : kit.model(idx).lights) {
             WorldLight w;
             w.position = t.point(l.position);
             w.radiance = l.color * l.intensity;
             w.radius = l.radius;
+            w.beacon = selfPowered;
             level.lights.push_back(w);
         }
+        // effect anchors: sparks and steam
+        for (const KitMarker& mk : kit.model(idx).markers) {
+            Emitter e;
+            if (mk.name.starts_with("spark")) e.kind = Emitter::Spark;
+            else if (mk.name.starts_with("steam")) e.kind = Emitter::Steam;
+            else continue;
+            e.position = t.point(mk.position);
+            e.direction = normalize(t.dir(mk.direction));
+            e.cell = cell;
+            e.phase = dress.unit();
+            level.emitters.push_back(e);
+        }
         return idx;
+    }
+
+    // A collision box given in a straight corridor piece's canonical Blender frame
+    // (x east, y north): x0..x1, y0..y1, placed with transform t.
+    void boxCanon(const Mat4& t, float x0, float y0, float x1, float y1, float bottom = 0.0f) {
+        float ax = 1e9f, az = 1e9f, bx = -1e9f, bz = -1e9f;
+        for (float bxv : {x0, x1})
+            for (float byv : {y0, y1}) {
+                Vec3 p = t.point({bxv, 0.0f, -byv});  // Blender (x, y) -> model (x, 0, -y)
+                ax = std::min(ax, p.x), az = std::min(az, p.z), bx = std::max(bx, p.x), bz = std::max(bz, p.z);
+            }
+        level.collision.add({ax, az, bx, bz, -1, bottom});
+    }
+
+    bool straightCell(int x, int y) const {
+        if (maze.kind(x, y) != CellKind::Corridor) return false;
+        int open = 0;
+        for (int d = 0; d < 4; ++d)
+            if (maze.passable(x, y, Dir(d))) open |= 1 << d;
+        return open == (1 | 4) || open == (2 | 8);
+    }
+
+    // Low pipe bundles: two on the walk route (about a third and two thirds of the way,
+    // outside lit sections, so the film always ducks under one), and a few elsewhere.
+    void chooseLowPipes() {
+        lowPipeCell.assign(size_t(maze.width() * maze.height()), 0);
+        const auto& route = level.route;
+        std::vector<int> candidates;
+        for (int i = 3; i + 3 < int(route.size()); ++i)
+            if (straightCell(route[size_t(i)].x, route[size_t(i)].y) &&
+                level.sections.moodAt(route[size_t(i)]) != Mood::Lit)
+                candidates.push_back(i);
+        int last = -100;
+        for (float f : {0.35f, 0.7f}) {
+            int want = int(f * float(route.size())), best = -1;
+            for (int i : candidates)
+                if (std::abs(i - last) >= 6 && (best < 0 || std::abs(i - want) < std::abs(best - want))) best = i;
+            if (best < 0) continue;
+            lowPipeCell[size_t(route[size_t(best)].y * maze.width() + route[size_t(best)].x)] = 1;
+            last = best;
+        }
+        for (int y = 0; y < maze.height(); ++y)
+            for (int x = 0; x < maze.width(); ++x)
+                if (straightCell(x, y) && level.sections.moodAt(x, y) != Mood::Lit && dress.chance(0.03f))
+                    lowPipeCell[size_t(y * maze.width() + x)] = 1;
+    }
+
+    // Derelict dressing of a straight corridor cell, by mood.
+    void dressCorridor(int x, int y, Vec3 c, float yaw, Mood mood, bool lowPipe) {
+        if (lowPipe) {
+            const Mat4 t = at(c, yaw);
+            place("pipes_low", t);
+            boxCanon(t, -kWalk, 0.62f, kWalk, 1.12f, 1.30f);
+            level.lowPipes.push_back({t.point({0, 0, -0.88f}), normalize(t.dir({0, 0, -1})), 1.30f});
+        }
+        float pSteam = 0, pDebris = 0, pBeacon = 0;
+        switch (mood) {
+            case Mood::Lit: break;
+            case Mood::Dim: pSteam = 0.1f, pDebris = 0.06f; break;
+            case Mood::Dark: pSteam = 0.08f, pDebris = 0.12f, pBeacon = 0.3f; break;
+            case Mood::Derelict: pSteam = 0.2f, pDebris = 0.3f, pBeacon = 0.04f; break;
+        }
+        const float side = dress.chance(0.5f) ? kPi : 0.0f;  // which wall
+        const float other = side + kPi;
+        if (dress.chance(pSteam)) {
+            const Mat4 t = at(c, yaw + side);
+            place("pipe_burst", t);
+            boxCanon(t, 0.9f, 0.0f, kWalk, 0.5f);
+            ++level.steamPipes;
+        }
+        if (dress.chance(pDebris)) {
+            const Mat4 t = at(c, yaw + other);
+            place("debris", t);
+            boxCanon(t, 0.5f, -0.95f, kWalk, 0.95f);
+            ++level.debrisPiles;
+        }
+        if (dress.chance(pBeacon)) {
+            place("beacon", at(c, yaw + other), -1, true);
+            ++level.beacons;
+        }
+        (void)x, (void)y;
     }
 
     static Mat4 at(Vec3 p, float yaw) { return Mat4::translation(p) * Mat4::rotationY(yaw); }
@@ -72,7 +166,24 @@ public:
         for (const CorridorPiece& p : kCorridors)
             for (int k = 0; k < 4; ++k)
                 if (rotateMask(p.mask, k) == open) {
-                    place(p.model, at(c, k * kPi / 2));
+                    float yaw = float(k) * kPi / 2;
+                    if (p.mask == (1 | 4)) {
+                        // straight: maybe the broken-ceiling variant, then derelict dressing
+                        const Mood mood = level.sections.moodAt(x, y);
+                        const bool lowPipe = lowPipeCell[size_t(y * maze.width() + x)] != 0;
+                        float pBroken = mood == Mood::Derelict ? 0.35f : mood == Mood::Dark ? 0.1f
+                                        : mood == Mood::Dim     ? 0.05f : 0.0f;
+                        if (!lowPipe && dress.chance(pBroken)) {
+                            if (dress.chance(0.5f)) yaw += kPi;  // either end of the cell
+                            place("corridor_straight_broken", at(c, yaw));
+                            ++level.brokenCeilings;
+                        } else {
+                            place(p.model, at(c, yaw));
+                        }
+                        dressCorridor(x, y, c, yaw, mood, lowPipe);
+                    } else {
+                        place(p.model, at(c, yaw));
+                    }
                     goto placed;
                 }
     placed:
@@ -260,9 +371,68 @@ public:
     const Kit& kit;
     Level& level;
     int cell = -1;  // cell being built (tags placed models)
+    // Derelict dressing has its own random stream, so it never shifts the room walls and
+    // props drawn from the level's stream.
+    static constexpr uint64_t kDressStream = 0xd3e1c7a5b9f2u;
+    Rng dress;
+    std::vector<char> lowPipeCell;
 };
 
 }  // namespace
+
+float ceilingAt(const Maze& maze, Vec3 p) {
+    const int cx = int(std::floor(p.x / kCell + 0.5f)), cy = int(std::floor(p.z / kCell + 0.5f));
+    switch (maze.kind(cx, cy)) {
+        case CellKind::Room: return 3.4f;
+        case CellKind::Corridor: return 2.85f;
+        case CellKind::Void: return 0.0f;
+    }
+    return 0.0f;
+}
+
+float raycastLevel(const Maze& maze, const Level& level, Vec3 o, Vec3 d, float maxDist,
+                   const std::vector<float>& doorOpen, Vec3& normal) {
+    auto blocked = [&](Vec3 p, Vec3 prev, Vec3& n) {
+        if (p.y <= 0.0f) {
+            n = {0, 1, 0};
+            return true;
+        }
+        if (p.y >= ceilingAt(maze, p)) {
+            n = {0, -1, 0};
+            return true;
+        }
+        if (const Box2* b = level.collision.blockedAt({p.x, p.z}, p.y, doorOpen)) {
+            if (prev.x < b->x0) n = {-1, 0, 0};
+            else if (prev.x > b->x1) n = {1, 0, 0};
+            else if (prev.z < b->z0) n = {0, 0, -1};
+            else if (prev.z > b->z1) n = {0, 0, 1};
+            else n = prev.y < b->bottom ? Vec3{0, -1, 0} : Vec3{0, 1, 0};
+            return true;
+        }
+        return false;
+    };
+    const float step = 0.04f;
+    Vec3 prev = o;
+    for (float t = step; t <= maxDist; t += step) {
+        Vec3 p = o + d * t;
+        Vec3 n;
+        if (blocked(p, prev, n)) {
+            // narrow it down between the last free sample and this one
+            float lo = t - step, hi = t;
+            for (int i = 0; i < 8; ++i) {
+                float mid = 0.5f * (lo + hi);
+                Vec3 nm;
+                if (blocked(o + d * mid, o + d * lo, nm)) hi = mid;
+                else lo = mid;
+            }
+            normal = n;
+            return hi;
+        }
+        prev = p;
+    }
+    normal = {0, 1, 0};
+    return maxDist;
+}
 
 Vec3 doorLeafOffset(const std::string& name, float open) {
     if (name.find("LeafL") != std::string::npos) return {-0.8f * open, 0, 0};
@@ -278,6 +448,7 @@ Level buildLevel(const Maze& maze, const Kit& kit) {
     level.route = maze.findPath(maze.startCell(), maze.exitCell());
 
     level.sections = buildSections(maze);
+    b.chooseLowPipes();
 
     for (int y = 0; y < maze.height(); ++y)
         for (int x = 0; x < maze.width(); ++x) {
@@ -297,6 +468,7 @@ Level buildLevel(const Maze& maze, const Kit& kit) {
     b.doors();
     b.props(rng);
     b.lightGrid();
+    level.collision.buildIndex(kCell, maze.width(), maze.height());
 
     level.spawn = cellCenter(maze.startCell()) + Vec3{0, kEyeHeight, 0};
     if (level.route.size() > 1) {

@@ -598,14 +598,15 @@
     "handgun": {
       "file": "assets/handgun.glb",
       "category": "weapon",
-      "placement": "grip origin; forward +Y, up +Z",
+      "placement": "grip origin; forward +Y, up +Z; fx_muzzle marker",
       "nodes": [
         "handgun_pipes",
         "handgun_body",
         "handgun_grip",
         "handgun_guard",
         "handgun_detail",
-        "handgun_glow"
+        "handgun_glow",
+        "handgun_fx_muzzle"
       ],
       "triangles": 21694,
       "materials": [
@@ -624,7 +625,211 @@
         "BH_Steel"
       ],
       "lights": 0,
-      "bytes": 598980
+      "bytes": 599068
+    },
+    "corridor_straight_broken": {
+      "file": "assets/corridor_straight_broken.glb",
+      "category": "corridor",
+      "placement": "derelict variant of corridor_straight: north ceiling tile torn open; fx_spark* markers",
+      "nodes": [
+        "corridor_straight_broken_body",
+        "corridor_straight_broken_detail",
+        "corridor_straight_broken_decal",
+        "corridor_straight_broken_pipes",
+        "corridor_straight_broken_L0",
+        "corridor_straight_broken_L1",
+        "corridor_straight_broken_fx_spark0",
+        "corridor_straight_broken_fx_spark1",
+        "corridor_straight_broken_fx_spark2",
+        "corridor_straight_broken_fx_spark3"
+      ],
+      "triangles": 44084,
+      "materials": [
+        "BH_AccentOrange",
+        "BH_CableBlack",
+        "BH_CableBlue",
+        "BH_CableRed",
+        "BH_CableYellow",
+        "BH_Copper",
+        "BH_DarkSteel",
+        "BH_Gunmetal",
+        "BH_LightAmber",
+        "BH_LightGreen",
+        "BH_LightTeal",
+        "BH_LightWhite",
+        "BH_Paint",
+        "BH_PaintDark",
+        "BH_PanelDark",
+        "BH_PanelGrey",
+        "BH_PanelLight",
+        "BH_PanelWhite",
+        "BH_PipeBlue",
+        "BH_PipeRed",
+        "BH_Recess",
+        "BH_Steel"
+      ],
+      "lights": 2,
+      "bytes": 1325348
+    },
+    "pipes_low": {
+      "file": "assets/pipes_low.glb",
+      "category": "derelict",
+      "placement": "straight corridor cell; crosses the walkway at y 0.88, underside 1.30 m (crouch)",
+      "nodes": [
+        "pipes_low_detail",
+        "pipes_low_decal",
+        "pipes_low_pipes"
+      ],
+      "triangles": 11638,
+      "materials": [
+        "BH_DarkSteel",
+        "BH_Gunmetal",
+        "BH_HazardBlack",
+        "BH_PaintYellow",
+        "BH_PipeBlue",
+        "BH_PipeYellow",
+        "BH_Steel"
+      ],
+      "lights": 0,
+      "bytes": 359400
+    },
+    "pipe_burst": {
+      "file": "assets/pipe_burst.glb",
+      "category": "derelict",
+      "placement": "straight corridor cell; east wall; fx_steam marker",
+      "nodes": [
+        "pipe_burst_detail",
+        "pipe_burst_decal",
+        "pipe_burst_pipes",
+        "pipe_burst_fx_steam"
+      ],
+      "triangles": 1342,
+      "materials": [
+        "BH_Gunmetal",
+        "BH_PipeRed",
+        "BH_PipeYellow",
+        "BH_Rust",
+        "BH_Soot",
+        "BH_Steel"
+      ],
+      "lights": 0,
+      "bytes": 43436
+    },
+    "debris": {
+      "file": "assets/debris.glb",
+      "category": "derelict",
+      "placement": "straight corridor cell; along the east wall",
+      "nodes": [
+        "debris_body",
+        "debris_detail",
+        "debris_decal",
+        "debris_pipes"
+      ],
+      "triangles": 1178,
+      "materials": [
+        "BH_DarkSteel",
+        "BH_Gunmetal",
+        "BH_PanelGrey",
+        "BH_PanelLight",
+        "BH_Soot"
+      ],
+      "lights": 0,
+      "bytes": 34508
+    },
+    "beacon": {
+      "file": "assets/beacon.glb",
+      "category": "derelict",
+      "placement": "straight corridor cell; east wall; own red light",
+      "nodes": [
+        "beacon_detail",
+        "beacon_decal",
+        "beacon_L0"
+      ],
+      "triangles": 1872,
+      "materials": [
+        "BH_DarkSteel",
+        "BH_Gunmetal",
+        "BH_LightRed",
+        "BH_Steel"
+      ],
+      "lights": 1,
+      "bytes": 53536
+    },
+    "arms": {
+      "file": "assets/arms.glb",
+      "category": "weapon",
+      "placement": "gun space (same transform as handgun)",
+      "nodes": [
+        "arms_gloves",
+        "arms_armor",
+        "arms_sleeves"
+      ],
+      "triangles": 10884,
+      "materials": [
+        "BH_DarkSteel",
+        "BH_Glove",
+        "BH_GloveArmor",
+        "BH_SuitFabric",
+        "BH_SuitPlate"
+      ],
+      "lights": 0,
+      "bytes": 249400
+    },
+    "muzzle_flash": {
+      "file": "assets/muzzle_flash.glb",
+      "category": "fx",
+      "placement": "gun space, at the muzzle",
+      "nodes": [
+        "muzzle_flash_decal"
+      ],
+      "triangles": 98,
+      "materials": [
+        "BH_LightFlash"
+      ],
+      "lights": 0,
+      "bytes": 6844
+    },
+    "bolt": {
+      "file": "assets/bolt.glb",
+      "category": "fx",
+      "placement": "origin at centre, along +Y, 0.5 m",
+      "nodes": [
+        "bolt_decal"
+      ],
+      "triangles": 180,
+      "materials": [
+        "BH_LightBolt"
+      ],
+      "lights": 0,
+      "bytes": 11884
+    },
+    "spark": {
+      "file": "assets/spark.glb",
+      "category": "fx",
+      "placement": "origin at centre, along +Y, 7 cm",
+      "nodes": [
+        "spark_decal"
+      ],
+      "triangles": 12,
+      "materials": [
+        "BH_LightSpark"
+      ],
+      "lights": 0,
+      "bytes": 1848
+    },
+    "scorch": {
+      "file": "assets/scorch.glb",
+      "category": "fx",
+      "placement": "decal in the XY plane facing +Z",
+      "nodes": [
+        "scorch_decal"
+      ],
+      "triangles": 14,
+      "materials": [
+        "BH_Soot"
+      ],
+      "lights": 0,
+      "bytes": 1516
     }
   }
 }

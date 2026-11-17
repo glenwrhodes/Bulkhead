@@ -52,10 +52,19 @@ struct KitLight {
     float radius = 0.15f;
 };
 
+// An effect anchor from Blender: an empty named <model>_fx_<name> (sparks, steam, the
+// muzzle). direction is the empty's Blender +Y axis, in model space.
+struct KitMarker {
+    std::string name;          // the part after "_fx_", e.g. "spark0", "steam", "muzzle"
+    Vec3 position;
+    Vec3 direction{0, 0, -1};
+};
+
 struct KitModel {
     std::string name;          // file stem, e.g. "corridor_straight"
     std::vector<uint32_t> parts;
     std::vector<KitLight> lights;
+    std::vector<KitMarker> markers;
     Vec3 boundsMin, boundsMax;
     uint32_t triangles = 0;
 };

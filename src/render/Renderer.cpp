@@ -46,6 +46,10 @@ static_assert(sizeof(GpuInstanceInfo) == 32, "matches InstInfo in trace.hlsl");
 struct GpuCellInfo {
     float decay, haze, mood, pad;
 };
+struct GpuSteam {
+    float originLength[4], dirStrength[4], lightSeed[4];
+};
+static_assert(sizeof(GpuSteam) == 48, "matches Steam in trace.hlsl");
 
 // descriptor heap slots
 constexpr uint32_t kSlotMap = 0;
@@ -53,7 +57,7 @@ constexpr uint32_t kSlotTrace = 1;    // + parity * 4: prevAccum SRV, prevPos SR
 constexpr uint32_t kSlotPresent = 9;  // + parity * 2: accum SRV, map SRV
 constexpr uint32_t kHeapSize = 16;
 
-constexpr UINT8 kMaskWorld = 0x01, kMaskGun = 0x02, kMaskGlass = 0x04;
+constexpr UINT8 kMaskWorld = 0x01, kMaskGun = 0x02, kMaskGlass = 0x04, kMaskFx = 0x08;
 
 D3D12_RESOURCE_BARRIER transitionBarrier(ID3D12Resource* r, D3D12_RESOURCE_STATES from, D3D12_RESOURCE_STATES to) {
     D3D12_RESOURCE_BARRIER b{};
@@ -226,7 +230,7 @@ void Renderer::createPipelines() {
     ID3D12Device5* device = gpu_.device();
 
     // --- trace (compute) ---
-    D3D12_ROOT_PARAMETER tp[12]{};
+    D3D12_ROOT_PARAMETER tp[14]{};
     tp[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     tp[0].Descriptor.ShaderRegister = 0;
     for (UINT i = 1; i <= 9; ++i) {
@@ -247,9 +251,13 @@ void Renderer::createPipelines() {
     tp[10].DescriptorTable.pDescriptorRanges = ranges;
     tp[11].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
     tp[11].Descriptor.ShaderRegister = 11;  // t11: per-cell wear, haze, mood
+    tp[12].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+    tp[12].Descriptor.ShaderRegister = 12;  // t12: short-lived lights
+    tp[13].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+    tp[13].Descriptor.ShaderRegister = 13;  // t13: steam plumes
     for (auto& p : tp) p.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     D3D12_ROOT_SIGNATURE_DESC trs{};
-    trs.NumParameters = 12;
+    trs.NumParameters = 14;
     trs.pParameters = tp;
     traceRS_ = serializeRootSignature(device, trs);
 
@@ -658,6 +666,25 @@ void Renderer::recordScene(const std::vector<SceneInstance>& instances, const Fr
         auto* ex = static_cast<uint32_t*>(f.exploredPtr);
         const bool fog = s.explored && s.explored->size() == cells;
         for (uint32_t i = 0; i < cells; ++i) ex[i] = fog ? ((*s.explored)[i] ? 1u : 0u) : 1u;
+
+        const size_t dn = s.dynamicLights ? std::min<size_t>(s.dynamicLights->size(), 32) : 0;
+        ensure(f.dynLights, f.dynLightsPtr, f.dynLightsCapacity, 32, sizeof(GpuLight));
+        auto* dl = static_cast<GpuLight*>(f.dynLightsPtr);
+        for (size_t i = 0; i < dn; ++i) {
+            const DynamicLight& l = (*s.dynamicLights)[i];
+            dl[i] = {{l.position.x, l.position.y, l.position.z, l.radius}, {l.radiance.x, l.radiance.y, l.radiance.z, l.range}};
+        }
+        dynCount_ = float(dn);
+        const size_t sn = s.steam ? std::min<size_t>(s.steam->size(), 16) : 0;
+        ensure(f.steam, f.steamPtr, f.steamCapacity, 16, sizeof(GpuSteam));
+        auto* st = static_cast<GpuSteam*>(f.steamPtr);
+        for (size_t i = 0; i < sn; ++i) {
+            const SteamPlume& p = (*s.steam)[i];
+            st[i] = {{p.origin.x, p.origin.y, p.origin.z, p.length},
+                     {p.direction.x, p.direction.y, p.direction.z, p.strength},
+                     {p.light.x, p.light.y, p.light.z, p.seed}};
+        }
+        steamCount_ = float(sn);
     }
 
     // --- top-level acceleration structure ---
@@ -671,7 +698,10 @@ void Renderer::recordScene(const std::vector<SceneInstance>& instances, const Fr
         for (int r = 0; r < 3; ++r)
             for (int c = 0; c < 4; ++c) d.Transform[r][c] = si.transform.m[r][c];
         d.InstanceID = i;
-        d.InstanceMask = (si.flags & kInstanceGun) ? kMaskGun : (part.transparent ? kMaskGlass : kMaskWorld);
+        d.InstanceMask = (si.flags & kInstanceGun)   ? kMaskGun
+                         : (si.flags & kInstanceFx) ? kMaskFx
+                         : part.transparent         ? kMaskGlass
+                                                    : kMaskWorld;
         d.InstanceContributionToHitGroupIndex = 0;
         // glTF fronts are counter-clockwise in a right-handed space; DXR's default winding
         // test (clockwise, left-handed convention) already matches them.
@@ -726,6 +756,7 @@ void Renderer::recordScene(const std::vector<SceneInstance>& instances, const Fr
         c.options[0] = s.rayTracing ? 1.0f : 0.0f;
         c.options[1] = 0.012f;
         c.options[2] = float(std::max(1, s.maxHistory));
+        c.options[3] = dynCount_;
         c.flashPos[0] = s.flashPos.x, c.flashPos[1] = s.flashPos.y, c.flashPos[2] = s.flashPos.z;
         c.flashPos[3] = s.flashlight ? s.flashIntensity : 0.0f;
         c.flashDir[0] = s.flashDir.x, c.flashDir[1] = s.flashDir.y, c.flashDir[2] = s.flashDir.z;
@@ -733,6 +764,7 @@ void Renderer::recordScene(const std::vector<SceneInstance>& instances, const Fr
         c.flashCone[0] = s.flashCosInner;
         c.flashCone[1] = std::cos(std::acos(std::clamp(s.flashCosOuter, -1.0f, 1.0f)) * 1.9f);  // spill edge
         c.flashCone[2] = 30.0f;  // range, m
+        c.flashCone[3] = steamCount_;
         c.haze[0] = s.haze;
         c.haze[1] = 0.2f;        // Henyey-Greenstein g: a little forward scattering
         c.haze[2] = s.time;
@@ -757,6 +789,8 @@ void Renderer::recordScene(const std::vector<SceneInstance>& instances, const Fr
         cmd_->SetComputeRootShaderResourceView(9, cellLightBuffer_->GetGPUVirtualAddress());
         cmd_->SetComputeRootDescriptorTable(10, gpuSlot(kSlotTrace + cur * 4));
         cmd_->SetComputeRootShaderResourceView(11, cellInfoBuffer_->GetGPUVirtualAddress());
+        cmd_->SetComputeRootShaderResourceView(12, f.dynLights->GetGPUVirtualAddress());
+        cmd_->SetComputeRootShaderResourceView(13, f.steam->GetGPUVirtualAddress());
         cmd_->Dispatch((width_ + 7) / 8, (height_ + 7) / 8, 1);
         last_ = cur;
         ++frameCounter_;

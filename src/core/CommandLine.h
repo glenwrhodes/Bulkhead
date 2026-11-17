@@ -8,7 +8,7 @@
 namespace bh {
 
 struct Options {
-    enum class Mode { Interactive, Capture, Shots, Bench, Overhead, Help };
+    enum class Mode { Interactive, Capture, Shots, Bench, Overhead, Check, Help };
     Mode mode = Mode::Interactive;
 
     std::filesystem::path output;  // capture/shots folder or overhead PNG
@@ -26,6 +26,7 @@ struct Options {
     bool rayTracing = true;
     bool hud = true;
     bool flashlight = true;
+    std::string scene = "walk";    // capture: "walk" (start -> exit) or "fire" (standing, six shots)
     float haze = 1.0f;             // haze density multiplier
     float exposure = 1.0f;
     bool debugLayer = false;

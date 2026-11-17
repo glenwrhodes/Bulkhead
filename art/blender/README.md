@@ -23,7 +23,9 @@ plus `assets/kit_manifest.json`, and saves `bulkhead_kit.blend`. It takes about 
 | `bk_doors.py` | Door frame, sliding door (two leaves with small windows), bulkhead door, airlock door |
 | `bk_room.py` | Room floor, coffered ceiling, wall variants A and B, wall with doorway (boolean cut), corner post |
 | `bk_props.py` | Crates (3), barrels (2), O2 canister, console |
-| `bk_gun.py` | BH-9 ARC energy pistol |
+| `bk_gun.py` | BH-9 ARC energy pistol (with the `fx_muzzle` marker) |
+| `bk_derelict.py` | Derelict dressing: `pipes_low` (crouch under), `pipe_burst` (steam), `debris`, `beacon` |
+| `bk_arms.py` | The player's arms (gloves, armour, sleeves) in gun space; `muzzle_flash`, `bolt`, `spark`, `scorch` |
 | `bk_layout.py` | Places pieces the way the engine will (test corridor, room, props) |
 | `bk_studio.py` | Eevee render setup, cameras, lights, isolating one piece |
 | `bk_build.py` | One-shot rebuild, export and manifest |
@@ -42,6 +44,13 @@ plus `assets/kit_manifest.json`, and saves `bulkhead_kit.blend`. It takes about 
 - **Handgun parts** (round 4): a solid moulded trigger guard and bladed trigger, stippled grip panels, a beavertail, a magazine baseplate and a release button (node `handgun_guard`). In the engine it is drawn as a viewmodel attached to the camera.
 - **Materials**: one shared palette named `BH_*`, flat PBR values (no textures). Every material is single-sided except `BH_Glass`, which is alpha-blended. Emissive materials (`BH_Light*`, `BH_Screen*`) mark light sources.
 - Corridor and room-ceiling pieces include **point lights** (KHR_lights_punctual) at the fixtures.
+- **Effect markers** (rounds 6-7) are empties named `<piece>_fx_<name>`, made with `Piece.marker()`. The empty's
+  +Y is the direction. The engine turns `spark*` into spark emitters, `steam*` into steam jets, and `muzzle`
+  (on the handgun) into where bolts and the flash come from.
+- **Derelict pieces** are modelled in a straight corridor cell's frame (travel along Y, walls at x = ±1.2). Wall
+  pieces sit on the east wall, and the engine turns them 180° for the west one. `corridor_straight_broken` is
+  `build_corridor('straight', broken=True)`: the same walls (same seed) with the north ceiling tile torn open.
+- **Arms** share the handgun's origin and axes, so the engine draws them with the gun's own matrix.
 
 ## Video shots
 

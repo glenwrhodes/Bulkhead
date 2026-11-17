@@ -1,0 +1,47 @@
+BULKHEAD
+========
+
+A ray-traced first-person shooter in a generated, derelict sci-fi ship.
+Find the red airlock: it is the room farthest from where you start.
+
+Run Bulkhead.exe. Nothing needs installing. Keep the "assets" folder next to
+Bulkhead.exe: the ship's models are loaded from there.
+
+
+WHAT YOU NEED
+-------------
+- Windows 10 (version 2004 or newer) or Windows 11, 64-bit.
+- A graphics card with hardware ray tracing (DirectX 12 Ultimate / DXR 1.1):
+    NVIDIA GeForce RTX 20-series or newer,
+    AMD Radeon RX 6000-series or newer,
+    Intel Arc.
+  Install a current graphics driver. Without such a card the game shows a
+  message and closes.
+
+
+CONTROLS
+--------
+  W A S D / arrows   move
+  Mouse              look (click the window to grab the mouse)
+  Left click         fire
+  Ctrl or C          crouch (to get under low pipes)
+  Shift              run
+  F                  flashlight on/off
+  M or Tab           map (only the parts of the ship you have seen)
+  R                  ray tracing on/off
+  H                  HUD on/off
+  N                  a new ship
+  F12                screenshot (saved in a "captures" folder)
+  Esc                release the mouse; press again to quit
+
+
+OPTIONS
+-------
+  Bulkhead.exe --seed 1234       a particular ship (the same seed is the same ship)
+  Bulkhead.exe --res 1920x1080   window size
+  Bulkhead.exe --help            everything else, including the headless
+                                 capture, benchmark and map modes
+
+
+Copyright (c) 2026 Tiny Moosh Games Inc. All rights reserved.
+https://github.com/glenwrhodes/Bulkhead

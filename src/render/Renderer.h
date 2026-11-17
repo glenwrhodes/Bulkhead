@@ -14,6 +14,7 @@
 
 #include "core/Image.h"
 #include "core/Math.h"
+#include "game/Effects.h"
 #include "render/Gpu.h"
 
 namespace bh {
@@ -48,6 +49,9 @@ struct FrameSettings {
     // Cells the player has seen (y * w + x, non-zero = seen); null = the whole map shows.
     const std::vector<uint8_t>* explored = nullptr;
     float minimapCells = 6.0f; // minimap shows this many cells either side of the player
+    // Short-lived lights (sparks, muzzle flash, bolts, impacts) and steam plumes.
+    const std::vector<DynamicLight>* dynamicLights = nullptr;
+    const std::vector<SteamPlume>* steam = nullptr;
 };
 
 class Renderer {
@@ -101,6 +105,12 @@ private:
         ComPtr<ID3D12Resource> explored;     // uint per cell
         void* exploredPtr = nullptr;
         uint32_t exploredCapacity = 0;
+        ComPtr<ID3D12Resource> dynLights;    // DynamicLight, same layout as a level light
+        void* dynLightsPtr = nullptr;
+        uint32_t dynLightsCapacity = 0;
+        ComPtr<ID3D12Resource> steam;        // SteamPlume
+        void* steamPtr = nullptr;
+        uint32_t steamCapacity = 0;
     };
 
     void createPipelines();
@@ -164,6 +174,7 @@ private:
     ComPtr<ID3D12Resource> cellBuffer_, cellLightBuffer_, cellInfoBuffer_;
     bool levelSet_ = false;
     float gridW_ = 1, gridH_ = 1, lightCount_ = 0;
+    float dynCount_ = 0, steamCount_ = 0;  // this frame
     uint64_t lastSceneTriangles_ = 0;
 };
 

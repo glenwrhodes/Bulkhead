@@ -115,8 +115,11 @@ void testLevels() {
         // the scripted walk never clips a wall, prop or door jamb (doors open)
         WalkPath walk(level.route);
         int clipped = 0;
-        for (float s = 0; s <= walk.length(); s += 0.25f)
-            if (level.collision.overlaps(walk.at(s), 0.25f, open)) ++clipped;
+        for (float s = 0; s <= walk.length(); s += 0.25f) {
+            // crouching under low pipes
+            const float h = level.collision.headroom(walk.at(s), 0.25f) > 0.0f ? kCrouchHeight : kStandHeight;
+            if (level.collision.overlaps(walk.at(s), 0.25f, open, h)) ++clipped;
+        }
         CHECK_MSG(clipped == 0, std::format("{}: walk clips geometry at {} samples", tag, clipped));
         Vec2 a = walk.at(0), b = walk.at(walk.length());
         CHECK(std::abs(a.x - level.spawn.x) < 0.01f && std::abs(a.y - level.spawn.z) < 0.01f);
@@ -168,11 +171,14 @@ void testGame() {
     game.buildInstances(instances);
     size_t parts = 0;
     for (const PlacedModel& pm : game.level().placed) parts += g_kit.model(pm.model).parts.size();
-    size_t gunParts = g_kit.model(g_kit.find("handgun")).parts.size();
-    CHECK(instances.size() == parts + gunParts);
-    int gun = 0;
-    for (const SceneInstance& si : instances) gun += (si.flags & kInstanceGun) != 0;
-    CHECK(size_t(gun) == gunParts);
+    size_t gunParts = g_kit.model(g_kit.find("handgun")).parts.size() + g_kit.model(g_kit.find("arms")).parts.size();
+    size_t world = 0, gun = 0;
+    for (const SceneInstance& si : instances) {
+        world += si.flags == 0;
+        gun += (si.flags & kInstanceGun) != 0;
+    }
+    CHECK(world == parts);   // no scorch marks yet
+    CHECK(gun == gunParts);  // the gun and the arms holding it
 
     // the player stays put without input and moves forward with it
     Game g2(g_kit, p);
@@ -303,10 +309,133 @@ void testMood() {
         std::vector<float> open(l.doors.size(), 1.0f);
         WalkPath walk(l.route);
         int clipped = 0;
-        for (float s = 0; s <= walk.length(); s += 0.25f)
-            if (l.collision.overlaps(walk.at(s), 0.25f, open)) ++clipped;
+        for (float s = 0; s <= walk.length(); s += 0.25f) {
+            const float h = l.collision.headroom(walk.at(s), 0.25f) > 0.0f ? kCrouchHeight : kStandHeight;
+            if (l.collision.overlaps(walk.at(s), 0.25f, open, h)) ++clipped;
+        }
         CHECK_MSG(clipped == 0, std::format("40x40 seed {}: walk clips geometry at {} samples", seed, clipped));
         CHECK(l.missingModels.empty() && int(l.doors.size()) == maze.countDoors());
+    }
+}
+
+// Round 6-7: markers, derelict dressing, crouching under low pipes, effects, firing.
+void testDerelictAndGun() {
+    auto markers = [&](const char* model, const char* prefix) {
+        int n = 0;
+        int i = g_kit.find(model);
+        if (i < 0) return -1;
+        for (const KitMarker& m : g_kit.model(i).markers) n += m.name.starts_with(prefix);
+        return n;
+    };
+    CHECK(markers("handgun", "muzzle") == 1);
+    CHECK(markers("corridor_straight_broken", "spark") == 4);
+    CHECK(markers("pipe_burst", "steam") == 1);
+    for (const char* name : {"arms", "muzzle_flash", "bolt", "spark", "scorch", "pipes_low", "debris", "beacon"})
+        CHECK_MSG(g_kit.find(name) >= 0, std::string("kit model missing: ") + name);
+    // the muzzle is in front of the grip, forward is -Z
+    const KitModel& gun = g_kit.model(g_kit.find("handgun"));
+    if (!gun.markers.empty()) {
+        CHECK(gun.markers[0].position.z < -0.12f && gun.markers[0].direction.z < -0.9f);
+    }
+
+    MazeParams p;
+    p.width = p.height = 40;
+    p.seed = 1234;
+    Game game(g_kit, p);
+    const Level& level = game.level();
+    int sparks = 0, steam = 0;
+    for (const Emitter& e : level.emitters) (e.kind == Emitter::Spark ? sparks : steam)++;
+    std::printf("  40x40 seed 1234: %d broken ceilings, %d steam pipes, %d debris piles, %d beacons, %zu low pipes, "
+                "%d spark and %d steam emitters\n",
+                level.brokenCeilings, level.steamPipes, level.debrisPiles, level.beacons, level.lowPipes.size(), sparks,
+                steam);
+    CHECK(level.brokenCeilings > 5 && level.steamPipes > 3 && level.debrisPiles > 5 && level.beacons > 3);
+    CHECK(level.lowPipes.size() >= 2 && sparks > 10 && steam > 3);
+
+    // a low pipe blocks a standing body and lets a crouched one through
+    const LowPipe& lp = level.lowPipes.front();
+    const std::vector<float> open(level.doors.size(), 1.0f);
+    const Vec2 under{lp.center.x, lp.center.z};
+    CHECK(level.collision.overlaps(under, 0.3f, open, kStandHeight));
+    CHECK(!level.collision.overlaps(under, 0.3f, open, kCrouchHeight));
+
+    // the scripted walk crouches under a pipe on the route, and slows down there
+    float maxCrouch = 0.0f, minEye = 9.0f;
+    for (float t = 0.0f; t < game.walkDuration(); t += 0.05f) {
+        game.setWalkTime(t);
+        maxCrouch = std::max(maxCrouch, game.crouch());
+        minEye = std::min(minEye, game.camera().position.y);
+    }
+    std::printf("  walk: %.1f s (%.1f s at full speed), deepest crouch %.2f, lowest eye %.2f m\n", game.walkDuration(),
+                Game::kStartPause + game.walk().length() / Game::kWalkSpeed + Game::kEndPause, maxCrouch, minEye);
+    CHECK(maxCrouch > 0.95f && minEye < 1.15f);
+    CHECK(game.walkDuration() > Game::kStartPause + game.walk().length() / Game::kWalkSpeed + Game::kEndPause + 1.0f);
+
+    // window mode: walking at a pipe standing up stops in front of it; crouching gets under
+    {
+        Game g(g_kit, p);
+        auto approach = [&](bool crouch) {
+            Camera c;
+            Vec3 start = lp.center - lp.along * 2.0f;
+            c.position = {start.x, kEyeHeight, start.z};
+            c.yaw = std::atan2(-lp.along.x, -lp.along.z);
+            g.setCamera(c);
+            InputState in;
+            in.forward = true;
+            in.crouch = crouch;
+            for (int i = 0; i < 120; ++i) g.update(1.0f / 60.0f, in);
+            Vec3 d = g.camera().position - lp.center;
+            return d.x * lp.along.x + d.z * lp.along.z;  // how far past the pipe's centre line
+        };
+        const float standing = approach(false), crouched = approach(true);
+        std::printf("  window: standing stops %.2f m before the pipe; crouching gets %.2f m past it\n", -standing,
+                    crouched);
+        CHECK(standing < -0.2f);
+        CHECK(crouched > 0.5f);
+    }
+
+    // effects: somewhere along the walk there are spark bursts and steam
+    int burstFrames = 0, steamFrames = 0, lightFrames = 0;
+    for (float t = 0.0f; t < game.walkDuration(); t += 0.25f) {
+        game.setWalkTime(t);
+        burstFrames += game.sparksVisible() > 0;
+        steamFrames += !game.steamPlumes().empty();
+        lightFrames += !game.dynamicLights().empty();
+    }
+    std::printf("  walk effects (every 0.25 s): sparks in %d, steam in %d, short-lived lights in %d samples\n",
+                burstFrames, steamFrames, lightFrames);
+    CHECK(burstFrames > 5 && steamFrames > 5 && lightFrames > 5);
+
+    // firing: a bolt flies, hits, leaves a scorch; the gun has a cooldown
+    {
+        Game g(g_kit, p);
+        Camera c;
+        for (const Shot& s : g.findShots())
+            if (s.name == "corridor_dark") c = s.camera;
+        g.setCamera(c);
+        g.setTime(10.0f);
+        CHECK(g.fire());
+        CHECK(!g.fire());  // too soon
+        std::vector<SceneInstance> inst;
+        g.setTime(10.01f);
+        g.buildInstances(inst);
+        int fx = 0, gunInst = 0;
+        for (const SceneInstance& si : inst) {
+            fx += (si.flags & kInstanceFx) != 0;
+            gunInst += (si.flags & kInstanceGun) != 0;
+        }
+        const size_t gunParts = g_kit.model(g_kit.find("handgun")).parts.size() + g_kit.model(g_kit.find("arms")).parts.size();
+        CHECK(fx >= 1);                         // the bolt
+        CHECK(size_t(gunInst) > gunParts);      // plus the muzzle flash
+        CHECK(!g.dynamicLights().empty());      // muzzle light
+        g.setTime(12.0f);
+        CHECK(g.scorchCount() == 1);
+        CHECK(g.fire());
+        CHECK(g.shotsFired() == 2);
+        // the camera ray straight down hits the floor at eye height
+        Vec3 n;
+        float d = raycastLevel(g.maze(), g.level(), c.position, {0, -1, 0}, 10.0f, std::vector<float>(level.doors.size(), 0.0f), n);
+        CHECK(std::abs(d - c.position.y) < 0.05f && n.y > 0.9f);
     }
 }
 
@@ -340,7 +469,8 @@ int main(int argc, char** argv) {
     };
     const Test tests[] = {{"kit", testKit}, {"collision", testCollision}, {"levels (40 seeds)", testLevels},
                           {"doors", testDoors}, {"game", testGame}, {"camera bob", testBob},
-                          {"sections, lights, map, flashlight (40x40)", testMood}};
+                          {"sections, lights, map, flashlight (40x40)", testMood},
+                          {"derelict pieces, crouching, effects, firing (40x40)", testDerelictAndGun}};
     for (const Test& t : tests) {
         const int before = g_failures;
         std::printf("[ RUN  ] %s\n", t.name);

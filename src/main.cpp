@@ -73,6 +73,49 @@ void applyGame(FrameSettings& s, const Game& game, const Options& o) {
     s.flashCosOuter = f.cosOuter;
     s.explored = &game.explored();
     s.haze = o.haze;
+    s.dynamicLights = &game.dynamicLights();
+    s.steam = &game.steamPlumes();
+}
+
+// The scripted shooting scene (--scene fire): standing in a corridor, six shots at the
+// walls and floor ahead, the aim easing from one target to the next.
+struct FireScene {
+    Camera base;
+    static constexpr float kShots[6] = {1.0f, 1.75f, 2.35f, 2.75f, 3.6f, 4.4f};
+    static constexpr float kYaw[6] = {0.0f, 0.22f, -0.2f, -0.26f, 0.3f, 0.06f};
+    static constexpr float kPitch[6] = {-0.03f, -0.05f, 0.05f, -0.12f, 0.08f, -0.16f};
+    static constexpr float kDuration = 6.0f;
+
+    Camera at(float t) const {
+        // aim: eases toward the next target in the 0.3 s before each shot, plus recoil
+        int next = 0;
+        while (next < 6 && t > kShots[next]) ++next;
+        float yaw = 0.0f, pitch = 0.0f;
+        const int prev = next - 1;
+        const float py = prev >= 0 ? kYaw[prev] : 0.0f, pp = prev >= 0 ? kPitch[prev] : 0.0f;
+        if (next < 6) {
+            float w = std::clamp((t - (kShots[next] - 0.3f)) / 0.3f, 0.0f, 1.0f);
+            w = w * w * (3.0f - 2.0f * w);
+            yaw = py + (kYaw[next] - py) * w;
+            pitch = pp + (kPitch[next] - pp) * w;
+        } else {
+            yaw = py;
+            pitch = pp;
+        }
+        if (prev >= 0) pitch += 0.025f * std::exp(-(t - kShots[prev]) / 0.12f);
+        Camera c = base;
+        c.yaw += yaw;
+        c.pitch += pitch;
+        return c;
+    }
+};
+
+Camera sceneCamera(const Game& game, const char* preferred) {
+    const auto shots = game.findShots();
+    for (const char* name : {preferred, "corridor_derelict", "corridor"})
+        for (const Shot& s : shots)
+            if (s.name == name) return s.camera;
+    return game.camera();
 }
 
 Vec2 mapUV(const OverheadMap& map, Vec3 p) {
@@ -161,6 +204,21 @@ int runOverhead(const Options& o) {
     return 0;
 }
 
+// CPU only: finds and loads the models, builds the ship, and says where the models came
+// from. The package check runs this on machines without a ray-tracing GPU.
+int runCheck(const Options& o) {
+    Kit kit;
+    loadKit(kit, o);
+    Game game(kit, mazeParams(o, o.seed.value_or(kDefaultSeed)));
+    describe(game);
+    if (!game.level().missingModels.empty()) {
+        log::error("The ship needs models the kit does not have");
+        return 1;
+    }
+    log::info("Check OK: assets {}", fs::absolute(findAssetsDirectory(o.assets)).string());
+    return 0;
+}
+
 int runCapture(const Options& o) {
     const auto started = std::chrono::steady_clock::now();
     const fs::path dir = o.output;
@@ -177,7 +235,14 @@ int runCapture(const Options& o) {
     const OverheadMap map = gameMap(game);
 
     const float dt = 1.0f / float(o.fps);
-    const int frames = o.frames > 0 ? o.frames : int(std::ceil((game.walkDuration() - o.start) * float(o.fps)));
+    const bool fireScene = o.scene == "fire";
+    FireScene fire;
+    if (fireScene) {
+        fire.base = sceneCamera(game, "corridor_dark");
+        log::info("Scene 'fire': standing at ({:.1f}, {:.1f}), six shots", fire.base.position.x, fire.base.position.z);
+    }
+    const float sceneLength = fireScene ? FireScene::kDuration : game.walkDuration();
+    const int frames = o.frames > 0 ? o.frames : int(std::ceil((sceneLength - o.start) * float(o.fps)));
     log::info("Capture: {} frames at {}x{}, {} fps, {} spp, RT {}, seed {} -> {}", frames, o.width, o.height, o.fps,
               o.spp, o.rayTracing ? "on" : "off", seed, dir.string());
 
@@ -187,11 +252,23 @@ int runCapture(const Options& o) {
     renderer.setKit(kit);
     renderer.setLevel(game.level());
 
-    // let the doors (and the explored map) catch up with a late start
-    for (float t = 0.0f; t < o.start; t += dt) {
-        game.setWalkTime(t);
+    // the scene at time t: the walk, or standing and shooting
+    int shotsDone = 0;
+    auto stepScene = [&](float t) {
+        if (fireScene) {
+            game.setCamera(fire.at(t));
+            game.setTime(t);
+            while (shotsDone < 6 && t >= FireScene::kShots[shotsDone]) {
+                game.fire();
+                ++shotsDone;
+            }
+        } else {
+            game.setWalkTime(t);
+        }
         game.updateDoors(dt);
-    }
+    };
+    // let the doors (and the explored map) catch up with a late start
+    for (float t = 0.0f; t < o.start; t += dt) stepScene(t);
     // PNG encoding is slower than rendering: encode on worker threads while the GPU
     // renders the next frames.
     std::vector<std::future<bool>> pending;
@@ -206,10 +283,9 @@ int runCapture(const Options& o) {
     float exitFlash = 0.0f;
     for (int i = 0; i < frames; ++i) {
         const float t = o.start + float(i) * dt;
-        game.setWalkTime(t);
-        game.updateDoors(dt);
+        stepScene(t);
         game.buildInstances(instances);
-        if (game.reachedExit()) exitFlash = std::min(1.0f, exitFlash + dt / 1.2f);
+        if (!fireScene && game.reachedExit()) exitFlash = std::min(1.0f, exitFlash + dt / 1.2f);
         FrameSettings s;
         s.camera = game.camera();
         s.rayTracing = o.rayTracing;
@@ -229,8 +305,11 @@ int runCapture(const Options& o) {
             return 1;
         }
         if ((i + 1) % 30 == 0 || i + 1 == frames)
-            log::info("  frame {}/{}  t={:.1f}s  {} triangles in scene", i + 1, frames, t,
-                      renderer.trianglesInScene());
+            log::info("  frame {}/{}  t={:.1f}s  {} triangles, {} section, crouch {:.2f}, {} lights + {} short, {} steam, "
+                      "{} spark bursts, {} shots",
+                      i + 1, frames, t, renderer.trianglesInScene(), toString(game.moodAtCamera()), game.crouch(),
+                      game.level().lights.size(), game.dynamicLights().size(), game.steamPlumes().size(),
+                      game.sparksVisible(), game.shotsFired());
     }
     drain(0);
     if (writeFailed) {
@@ -461,6 +540,9 @@ int runInteractive(const Options& o) {
         in.left = window.keyDown('A') || window.keyDown(VK_LEFT);
         in.right = window.keyDown('D') || window.keyDown(VK_RIGHT);
         in.run = window.keyDown(VK_SHIFT);
+        in.crouch = window.keyDown(VK_CONTROL) || window.keyDown('C');
+        // the click that grabs the mouse does not fire
+        in.fire = window.mouseCaptured() && window.keyDown(VK_LBUTTON);
         window.takeMouseDelta(in.mouseDx, in.mouseDy);
         game->update(dt, in);
         game->buildInstances(instances);
@@ -503,8 +585,8 @@ int runInteractive(const Options& o) {
             fpsTimer = 0.0f;
             std::string status = escaped ? "  |  ESCAPED! N = new ship" : "";
             window.setTitle(std::format(
-                "Bulkhead  |  seed {}  |  RT {}  |  {:.0f} fps  |  {}  |  WASD move, mouse look, Shift run, F flashlight, "
-                "M map, R ray tracing, H HUD, N new ship, Esc mouse{}",
+                "Bulkhead  |  seed {}  |  RT {}  |  {:.0f} fps  |  {}  |  WASD move, mouse look, click fire, Ctrl crouch, "
+                "Shift run, F flashlight, M map, R ray tracing, H HUD, N new ship, Esc mouse{}",
                 seed, rt ? "ON" : "OFF", fps, toString(game->moodAtCamera()), status));
         }
     }
@@ -524,6 +606,7 @@ int main(int argc, char** argv) {
         switch (options->mode) {
             case Options::Mode::Help: std::fputs(usageText().c_str(), stdout); return 0;
             case Options::Mode::Overhead: return runOverhead(*options);
+            case Options::Mode::Check: return runCheck(*options);
             case Options::Mode::Capture: return runCapture(*options);
             case Options::Mode::Shots: return runShots(*options);
             case Options::Mode::Bench: return runBench(*options);

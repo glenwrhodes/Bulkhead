@@ -8,7 +8,13 @@ milestone status are in `docs/PLAN.md`; update that table when a milestone lands
 - Bash can only run `cmake` and `ctest`. Build and test with:
   - `cmake -S . -B build -G "Visual Studio 17 2022" -A x64`
   - `cmake --build build --config Release`
-  - `ctest --test-dir build -C Release --output-on-failure` (labels `unit`, `smoke`, `film`)
+  - `ctest --test-dir build -C Release --output-on-failure` (labels `unit`, `smoke`, `film`,
+    `bench`, `package`). Run `-L film` in pieces: each walk half takes about 5 minutes to
+    render and 3.5 to check. `-R <name>_check` also reruns its `_run` unless you add
+    `-FS <name>`.
+- The download: `.github/workflows/build.yml` builds on GitHub (no GPU there: unit tests
+  plus the CPU-only `--check` of the zip), and publishes a release on every push to master.
+  `ctest -L package` does the same unpack-and-run check here, plus a ray-traced capture.
 - Nobody watches the screen. Each feature must be visible in a headless capture
   (`Bulkhead.exe --capture <dir>`), run as a ctest test. Open the resulting PNGs with the Read
   tool and look at them before calling a build good.
@@ -53,7 +59,13 @@ milestone status are in `docs/PLAN.md`; update that table when a milestone lands
   another 10. The 40 × 40 ship's 1080p walk (~6000 frames at 12 spp, ~0.08 s each) is split
   into `film_walkthrough_a` and `_b`; run them with separate ctest commands.
 - Ship moods (lit, dim, dark, derelict) live in `src/world/Sections.*`. They use their own
-  `Rng` streams: never draw from the maze's stream for them, or every layout changes. If a run is
+  `Rng` streams: never draw from the maze's stream for them, or every layout changes.
+  The derelict dressing in `Level.cpp` has its own stream too.
+- Effects (sparks, steam, bolts, scorch marks) are computed from time, not simulated, so
+  captures are repeatable. Instance masks: world 0x01, gun/arms 0x02, glass 0x04, fx 0x08.
+  Shadow and bounce rays use the world mask only.
+- Never mirror a basis in `Mat4::basis` (X × Y must equal Z). A mirrored instance flips
+  the winding, and back-face culling hides it. If a run is
   stopped, its `Bulkhead.exe` can keep running and lock the exe for the next build:
   wait for it to finish.
 

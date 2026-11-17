@@ -17,9 +17,16 @@
 //   haze            single scattering along the primary ray: one fixture sample (uniform
 //                   distance) and one flashlight sample (equiangular), both shadowed
 
+// Round 6-7: short-lived lights (spark bursts, the muzzle flash, bolts, impacts: every
+// pixel considers them, shadowed on primary hits) and steam plumes (ray-marched cones
+// with animated turbulence, lit by the fixtures around them, the flashlight and the
+// short-lived lights). Sparks and bolts have their own mask: seen directly, ignored by
+// shadow and bounce rays.
+
 #define MASK_WORLD 0x01
 #define MASK_GUN   0x02
 #define MASK_GLASS 0x04
+#define MASK_FX    0x08
 #define FLAG_GUN   1u
 #define PI 3.14159265
 
@@ -42,12 +49,14 @@ cbuffer Frame : register(b0)
     float4 resolution;  // w, h, 1/w, 1/h
     float4 jitter;      // xy subpixel jitter (pixels), z frame seed, w history mode
     float4 grid;        // grid w, grid h, cell size, light count
-    float4 options;     // x RT on, y ambient, z max history, w unused
+    float4 options;     // x RT on, y ambient, z max history, w short-lived light count
     float4 flashPos;    // xyz position, w intensity (W/sr, 0 = off)
     float4 flashDir;    // xyz direction, w cos(outer cone)
-    float4 flashCone;   // x cos(inner cone), y cos(spill edge), z range
+    float4 flashCone;   // x cos(inner cone), y cos(spill edge), z range, w steam plume count
     float4 hazeParams;  // x density multiplier, y HG g, z time
 };
+
+struct Steam { float4 originLength; float4 dirStrength; float4 lightSeed; };
 
 RaytracingAccelerationStructure gScene : register(t0);
 StructuredBuffer<Vertex>   gVerts      : register(t1);
@@ -63,6 +72,8 @@ Texture2D<float4>          gPrevPos    : register(t10);
 RWTexture2D<float4>        gAccum      : register(u0);
 RWTexture2D<float4>        gPos        : register(u1);
 StructuredBuffer<float4>   gCellInfo   : register(t11);  // per cell: decay, haze, mood
+StructuredBuffer<Light>    gDynLights  : register(t12);  // short-lived lights
+StructuredBuffer<Steam>    gSteam      : register(t13);  // steam plumes
 
 // ---------------------------------------------------------------------------
 // Random numbers
@@ -359,6 +370,27 @@ float3 directLight(float3 P, float3 N, float3 V, Surface s, bool shadows, bool s
             sum += E * brdf(N, V, L, s, specular);
         }
     }
+    // short-lived lights: few, so every one is considered
+    uint nd = uint(options.w);
+    for (uint i = 0; i < nd; ++i)
+    {
+        Light light = gDynLights[i];
+        float3 lp = light.posRadius.xyz;
+        if (shadows) lp += sphereSample(seed) * light.posRadius.w;
+        float3 toL = lp - P;
+        float d2 = dot(toL, toL);
+        float d = sqrt(d2);
+        float3 L = toL / d;
+        float NdotL = dot(N, L);
+        if (NdotL <= 0.0) continue;
+        float x = d / light.radianceRange.w;
+        float win = saturate(1.0 - x * x * x * x);
+        win *= win;
+        if (win <= 0.0) continue;
+        float3 E = light.radianceRange.rgb / max(d2, 0.02) * win * NdotL;
+        if (shadows && occluded(P + N * 0.004, L, d - 0.02)) continue;
+        sum += E * brdf(N, V, L, s, specular);
+    }
     return sum;
 }
 
@@ -543,6 +575,100 @@ float3 hazeInscatter(float3 o, float3 d, float tEnd, out float transmittance, in
             L += min(sig * exp(-sigma * ts) * hgPhase(dot(Ld, d)) * kFlashColor * flashPos.w * spot * win * w, 1.5);
         }
     }
+
+    // the brightest short-lived light (muzzle flash, spark burst): equiangular, shadowed
+    if (options.w >= 1.0)
+    {
+        Light light = gDynLights[0];
+        float3 lp = light.posRadius.xyz;
+        float delta = dot(lp - o, d);
+        // (the muzzle flash sits almost on the camera ray: keep its glow from blowing up)
+        float D = max(length(o + d * delta - lp), 0.3);
+        float thA = atan2(-delta, D), thB = atan2(tEnd - delta, D);
+        float t = D * tan(lerp(thA, thB, rnd(seed)));
+        float ts = clamp(delta + t, 0.0, tEnd);
+        float3 P = o + d * ts;
+        float3 toL = lp - P;
+        float dl = max(length(toL), 0.01);
+        float3 Ld = toL / dl;
+        float sig = max(cellInfo(P).y, 0.004) * hazeParams.x;
+        float win = lightWindow(dl, light.radianceRange.w);
+        if (win > 0.0 && !occluded(P, Ld, dl - 0.02))
+            L += min(0.35 * sig * exp(-sigma * ts) * hgPhase(dot(Ld, d)) * light.radianceRange.rgb * win * (thB - thA) / D,
+                     0.4);
+    }
+    return L;
+}
+
+// ---------------------------------------------------------------------------
+// Steam: plumes from torn pipes, ray-marched along the primary ray up to tMax.
+// T is the transmittance so far (in/out); returns the light the steam adds.
+// ---------------------------------------------------------------------------
+float3 steamLight(float3 P)
+{
+    float3 E = 0;
+    // flashlight (unshadowed: the plume is small and near)
+    if (flashPos.w > 0.0)
+    {
+        float3 toL = flashPos.xyz - P;
+        float d2 = dot(toL, toL);
+        E += kFlashColor * flashPos.w * flashSpot(toL * rsqrt(d2)) / max(d2, 0.1);
+    }
+    uint nd = uint(options.w);
+    for (uint i = 0; i < nd; ++i)
+    {
+        Light light = gDynLights[i];
+        float3 toL = light.posRadius.xyz - P;
+        E += light.radianceRange.rgb / max(dot(toL, toL), 0.1);
+    }
+    return E;
+}
+
+float3 marchSteam(float3 o, float3 d, float tMax, inout float T, inout uint seed)
+{
+    float3 L = 0;
+    uint n = uint(flashCone.w);
+    for (uint i = 0; i < n; ++i)
+    {
+        Steam s = gSteam[i];
+        float3 so = s.originLength.xyz;
+        float len = s.originLength.w;
+        float3 sd = s.dirStrength.xyz;
+        float strength = s.dirStrength.w;
+        // bounding sphere round the bent cone
+        float3 c = so + sd * (len * 0.5) + float3(0, 0.12 * len, 0);
+        float R = len * 0.8;
+        float3 oc = o - c;
+        float b = dot(oc, d);
+        float disc = b * b - (dot(oc, oc) - R * R);
+        if (disc <= 0.0) continue;
+        float sq = sqrt(disc);
+        float t0 = max(-b - sq, 0.0), t1 = min(-b + sq, tMax);
+        if (t1 <= t0) continue;
+        const int N = 14;
+        float dt = (t1 - t0) / N;
+        float t = t0 + dt * rnd(seed);
+        for (int k = 0; k < N; ++k, t += dt)
+        {
+            float3 p = o + d * t;
+            float u = dot(p - so, sd);
+            if (u < 0.0 || u > len) continue;
+            float3 axisP = so + sd * u + float3(0, 0.3 * u * u / len, 0);  // buoyant: bends up
+            float r = length(p - axisP);
+            float rad = 0.035 + 0.3 * u;                                    // widens
+            float prof = exp(-2.2 * r * r / (rad * rad));
+            if (prof < 0.01) continue;
+            float fade = pow(saturate(1.0 - u / len), 1.5) * smoothstep(0.0, 0.06, u);
+            float turb = fbm(p * 4.5 - sd * (hazeParams.z * 3.2) - float3(0, hazeParams.z * 0.8, 0) + s.lightSeed.w);
+            float dens = prof * fade * saturate(turb * 1.7 - 0.3) * strength * 9.0;
+            if (dens <= 1e-3) continue;
+            float a = 1.0 - exp(-dens * dt);
+            // single scattering, roughly isotropic, albedo ~0.9; a little ambient so it reads
+            float3 Lp = (s.lightSeed.xyz + steamLight(p)) * 0.07 + 0.004;
+            L += T * a * Lp;
+            T *= 1.0 - a;
+        }
+    }
     return L;
 }
 
@@ -602,6 +728,12 @@ void CSMain(uint3 id : SV_DispatchThreadID)
         float T;
         float3 ins = hazeInscatter(camPos.xyz, dir, firstT, T, seed);
         radiance = radiance * T + ins;
+        if (flashCone.w >= 1.0)
+        {
+            float Ts = 1.0;
+            float3 steam = marchSteam(camPos.xyz, dir, firstT, Ts, seed);
+            radiance = radiance * Ts + steam;
+        }
     }
     radiance = min(radiance, 64.0);  // tame fireflies
 

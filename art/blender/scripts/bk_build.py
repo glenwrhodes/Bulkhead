@@ -22,7 +22,8 @@ BLEND = os.path.join(ROOT, 'art', 'blender', 'bulkhead_kit.blend')
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
-MODULES = ['bk_core', 'bk_corridor', 'bk_doors', 'bk_room', 'bk_props', 'bk_gun', 'bk_layout', 'bk_studio']
+MODULES = ['bk_core', 'bk_corridor', 'bk_doors', 'bk_room', 'bk_props', 'bk_gun', 'bk_derelict', 'bk_arms',
+           'bk_layout', 'bk_studio']
 
 # How the engine uses each piece (documented in the manifest).
 CATEGORY = {
@@ -48,7 +49,18 @@ CATEGORY = {
     'barrel_red': ('prop', 'floor, prop centre'),
     'canister': ('prop', 'floor, prop centre'),
     'console': ('prop', 'floor, prop centre; screen faces -Y'),
-    'handgun': ('weapon', 'grip origin; forward +Y, up +Z'),
+    'handgun': ('weapon', 'grip origin; forward +Y, up +Z; fx_muzzle marker'),
+    'corridor_straight_broken': ('corridor', 'derelict variant of corridor_straight: north ceiling tile torn open; '
+                                             'fx_spark* markers'),
+    'pipes_low': ('derelict', 'straight corridor cell; crosses the walkway at y 0.88, underside 1.30 m (crouch)'),
+    'pipe_burst': ('derelict', 'straight corridor cell; east wall; fx_steam marker'),
+    'debris': ('derelict', 'straight corridor cell; along the east wall'),
+    'beacon': ('derelict', 'straight corridor cell; east wall; own red light'),
+    'arms': ('weapon', 'gun space (same transform as handgun)'),
+    'muzzle_flash': ('fx', 'gun space, at the muzzle'),
+    'bolt': ('fx', 'origin at centre, along +Y, 0.5 m'),
+    'spark': ('fx', 'origin at centre, along +Y, 7 cm'),
+    'scorch': ('fx', 'decal in the XY plane facing +Z'),
 }
 
 
@@ -74,6 +86,9 @@ def build_all(m):
     m['bk_room'].build_rooms(kit)
     m['bk_props'].build_props(kit)
     m['bk_gun'].build_gun(kit)
+    m['bk_corridor'].build_corridor('straight', kit, broken=True)
+    m['bk_derelict'].build_derelict(kit)
+    m['bk_arms'].build_all_fx(kit)
     m['bk_layout'].test_corridor()
     return kit
 

@@ -8,6 +8,9 @@ endif()
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+# The C++ runtime is linked in statically, so the download needs no Visual C++
+# redistributable: the EXE runs on a bare Windows 10/11.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
@@ -67,7 +70,8 @@ add_library(bulkhead_lib STATIC
   src/world/Collision.cpp  src/world/Collision.h
   src/world/Level.cpp      src/world/Level.h
   src/world/WalkPath.cpp   src/world/WalkPath.h
-  src/game/Game.cpp        src/game/Game.h)
+  src/game/Game.cpp        src/game/Game.h
+  src/game/Effects.h)
 target_include_directories(bulkhead_lib PUBLIC src)
 target_link_libraries(bulkhead_lib PUBLIC bh_stb bh_cgltf)
 target_compile_definitions(bulkhead_lib PRIVATE BULKHEAD_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
@@ -88,9 +92,21 @@ add_executable(Bulkhead
   ${TRACE_CS} ${PRESENT_VS} ${PRESENT_PS})
 set_source_files_properties(shaders/trace.hlsl shaders/present.hlsl PROPERTIES HEADER_FILE_ONLY TRUE)
 target_include_directories(Bulkhead PRIVATE ${BULKHEAD_SHADER_GEN_DIR})
-target_link_libraries(Bulkhead PRIVATE bulkhead_lib d3d12 dxgi dxguid)
+target_link_libraries(Bulkhead PRIVATE bulkhead_lib d3d12 dxgi dxguid delayimp)
+# D3D12 and DXGI load on first use, so the CPU-only modes (--check, --overhead, --help)
+# start even on a machine without them (GitHub's build machines check the download so).
+target_link_options(Bulkhead PRIVATE /DELAYLOAD:d3d12.dll /DELAYLOAD:dxgi.dll)
 bulkhead_settings(Bulkhead)
 set_property(DIRECTORY ${CMAKE_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT Bulkhead)
+
+# ---------------------------------------------------------------------------
+# Install = the downloadable game folder: the EXE, the models beside it, and a short
+# text file. cmake/PackageZip.cmake installs it and zips it; cmake/CheckPackage.cmake
+# unpacks the zip into an empty folder and runs it from there.
+# ---------------------------------------------------------------------------
+install(TARGETS Bulkhead RUNTIME DESTINATION .)
+install(DIRECTORY assets/ DESTINATION assets FILES_MATCHING PATTERN "*.glb" PATTERN "kit_manifest.json")
+install(FILES package/PLAY.txt package/THIRD_PARTY_NOTICES.txt DESTINATION .)
 
 # ---------------------------------------------------------------------------
 # Tests

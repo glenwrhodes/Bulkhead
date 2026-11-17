@@ -53,6 +53,11 @@ bulkhead_png_test(capture_debug_layer smoke
   GAME  --capture "${CAP}/debug_layer" --frames 3 --res 320x180 --spp 2 --start 2 --seed 7 --debug
   CHECK --dir "${CAP}/debug_layer" --count 3 --width 320 --height 180)
 
+# Firing: standing in a dark corridor, six shots (muzzle flash, bolts, impacts, scorch marks).
+bulkhead_png_test(fire_smoke smoke
+  GAME  --capture "${CAP}/fire_smoke" --scene fire --frames 24 --start 0.95 --res 640x360 --spp 2 --seed 1234
+  CHECK --dir "${CAP}/fire_smoke" --count 24 --width 640 --height 360)
+
 bulkhead_png_test(shots_smoke smoke
   GAME  --shots "${CAP}/shots_smoke" --res 640x360 --spp 4 --seed 1234
   CHECK --file "${CAP}/shots_smoke/shot_door_rt.png" --width 640 --height 360)
@@ -75,6 +80,17 @@ bulkhead_png_test(bench_walk bench
   GAME  --bench "${CAP}/bench_walk" --res 1920x1080 --seed 1234
   CHECK --file "${CAP}/bench_walk/frame_final.png" --width 1920 --height 1080)
 
+# --- package ----------------------------------------------------------------
+# The download: build the zip, unpack it into an empty folder, and run the game from
+# there (help, --check, and a short ray-traced capture). GitHub's machines run the same
+# check without the capture (no ray-tracing GPU there).
+add_test(NAME package_zip COMMAND "${CMAKE_COMMAND}" "-DBUILD=${CMAKE_BINARY_DIR}" "-DOUT=${CMAKE_BINARY_DIR}/dist"
+         "-DCONFIG=$<CONFIG>" -P "${CMAKE_SOURCE_DIR}/cmake/PackageZip.cmake")
+add_test(NAME package_check COMMAND "${CMAKE_COMMAND}" "-DZIP=${CMAKE_BINARY_DIR}/dist/Bulkhead-windows-x64.zip"
+         "-DWORK=${CMAKE_BINARY_DIR}/package_check" -DGPU=ON -P "${CMAKE_SOURCE_DIR}/cmake/CheckPackage.cmake")
+set_tests_properties(package_zip PROPERTIES LABELS package FIXTURES_SETUP package RUN_SERIAL TRUE)
+set_tests_properties(package_check PROPERTIES LABELS package FIXTURES_REQUIRED package RUN_SERIAL TRUE)
+
 # --- film -------------------------------------------------------------------
 # The walk from start to exit, 1080p at 30 fps, in two halves (one ctest run is cut off
 # after 10 minutes; each half takes about 6). Seed 1234 passes lit, dim, lit, derelict
@@ -90,15 +106,21 @@ bulkhead_png_test(film_overhead_walk film
   GAME  --overhead "${CAP}/walkthrough_overhead_seed${FILM_SEED}.png" --seed ${FILM_SEED}
   CHECK --file "${CAP}/walkthrough_overhead_seed${FILM_SEED}.png" --width ${MAP_PX} --height ${MAP_PX})
 
+# The gun: arms holding it, six shots in a dark corridor, 1080p at 30 fps (6 s).
+bulkhead_png_test(film_fire film
+  GAME  --capture "${CAP}/fire" --scene fire --res 1920x1080 --fps 30 --spp 16 --seed ${FILM_SEED}
+  CHECK --dir "${CAP}/fire" --count 180 --width 1920 --height 1080 --expect-motion)
+
 # Fixed views with ray tracing on and off, for side-by-side comparison: corridor, door,
-# room, junction, and one corridor in each mood (lit, dim, dark, derelict).
+# room, junction, one corridor in each mood (lit, dim, dark, derelict), and the derelict
+# dressing (broken ceiling, steam, low pipe, beacon).
 bulkhead_png_test(film_shots film
   GAME  --shots "${CAP}/shots" --res 1920x1080 --spp 32 --seed ${FILM_SEED} --no-hud
   CHECK --file "${CAP}/shots/shot_room_rt.png" --width 1920 --height 1080)
-foreach(mood lit dim dark derelict)
-  add_test(NAME film_shots_${mood}_check COMMAND capture_check
-    --file "${CAP}/shots/shot_corridor_${mood}_rt.png" --width 1920 --height 1080)
-  set_tests_properties(film_shots_${mood}_check PROPERTIES LABELS film FIXTURES_REQUIRED film_shots)
+foreach(shot corridor_lit corridor_dim corridor_dark corridor_derelict broken_ceiling steam low_pipe beacon)
+  add_test(NAME film_shots_${shot}_check COMMAND capture_check
+    --file "${CAP}/shots/shot_${shot}_rt.png" --width 1920 --height 1080)
+  set_tests_properties(film_shots_${shot}_check PROPERTIES LABELS film FIXTURES_REQUIRED film_shots)
 endforeach()
 
 foreach(seed 7 42 2026)

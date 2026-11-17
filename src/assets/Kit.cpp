@@ -111,6 +111,18 @@ bool Kit::loadModel(const std::filesystem::path& file, std::string& error) {
             l.radius = model.name == "room_ceiling" ? 0.4f : 0.15f;
             model.lights.push_back(l);
         }
+        if (!node->mesh && !node->light && node->name) {
+            const std::string nm = node->name;
+            const size_t at = nm.find("_fx_");
+            if (at != std::string::npos) {
+                KitMarker mk;
+                mk.name = nm.substr(at + 4);
+                mk.position = xform(world, {0, 0, 0}, 1.0f);
+                // Blender's +Y becomes glTF -Z
+                mk.direction = normalize(xform(world, {0, 0, -1}, 0.0f));
+                model.markers.push_back(mk);
+            }
+        }
         if (!node->mesh) continue;
 
         for (int pass = 0; pass < 2; ++pass) {  // 0: opaque primitives, 1: transparent

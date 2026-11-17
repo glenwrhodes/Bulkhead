@@ -5,7 +5,22 @@ on a custom C++20 engine with DirectX 12 and DXR 1.1 (inline ray queries). The m
 ship kit is generated in Blender (`art/blender/`). See [docs/PLAN.md](docs/PLAN.md) for
 the plan.
 
-**Current state (round 5):**
+## Download and play
+
+**[Download Bulkhead for Windows (zip)](https://github.com/glenwrhodes/Bulkhead/releases/latest/download/Bulkhead-windows-x64.zip)**
+
+Unzip it anywhere and run `Bulkhead\Bulkhead.exe`. Nothing needs installing. Every push to
+`master` is built on GitHub and published as a new [release](https://github.com/glenwrhodes/Bulkhead/releases).
+
+**You need** Windows 10 (version 2004 or newer) or Windows 11, 64-bit, and a graphics
+card with hardware ray tracing (DirectX 12 Ultimate, DXR 1.1): NVIDIA GeForce RTX
+20-series or newer, AMD Radeon RX 6000-series or newer, or Intel Arc, with a current
+driver.
+
+Find the red airlock: it is the room farthest from where you start. The controls are in
+the table under [Play](#play) and in `PLAY.txt` in the zip.
+
+**Current state (rounds 5-7):**
 - The generated ship (40 × 40 cells, 160 m square) is built from the Blender kit:
   corridors, rooms, doors and props.
 - It is split into sections, each with a mood: **lit**, **dim** (warm, failing lights),
@@ -15,8 +30,13 @@ the plan.
   illumination, glossy reflections, glass, and haze that the lights and your flashlight
   shine through.
 - You can walk it with keyboard and mouse, with collision. Doors open as you approach.
-- The handgun is on screen with a flashlight under the barrel. The minimap shows the cells
-  around you, but only the ones you have seen.
+- Derelict corridors have torn-open ceilings with hanging panels and live cables that spark,
+  burst pipes venting steam, debris, red emergency beacons, and low pipe bundles you have
+  to crouch under.
+- You hold the BH-9 energy pistol in armoured gloves. It fires glowing bolts with a muzzle
+  flash and recoil, and they leave sparks and scorch marks where they hit. A flashlight
+  sits under the barrel. The minimap shows the cells around you, but only the ones you
+  have seen.
 - The exit airlock ends the run.
 
 ## Build
@@ -31,6 +51,8 @@ cmake --build build --config Release
 
 ## Play
 
+From the download, run `Bulkhead.exe`. From a source build:
+
 ```
 build\bin\Release\Bulkhead.exe                 # a random ship
 build\bin\Release\Bulkhead.exe --seed 1234     # a specific ship
@@ -40,6 +62,8 @@ build\bin\Release\Bulkhead.exe --seed 1234     # a specific ship
 |---|---|
 | WASD / arrows | Move |
 | Mouse | Look (click the window to grab the mouse) |
+| Left click | Fire |
+| Ctrl or C | Crouch (to get under low pipes) |
 | Shift | Run |
 | F | Flashlight on/off |
 | M or Tab | Full map (only what you have seen) |
@@ -76,9 +100,10 @@ Captures go to `captures/` (git-ignored):
 
 | Folder or file | Contents |
 |---|---|
-| `captures/walkthrough_a/`, `walkthrough_b/` | The 1080p walk from start to exit, in two halves (lit, dim, derelict, dark) |
+| `captures/walkthrough_a/`, `walkthrough_b/` | The 1080p walk from start to exit, in two halves (lit, dim, derelict, dark; it crouches under a low pipe at 71 s and 140 s) |
+| `captures/fire/` | Standing in a dark corridor and firing six shots (1080p, 6 s) |
 | `captures/walkthrough_overhead_seed1234.png` | The map of that ship, sections in colour |
-| `captures/shots/` | RT on/off pairs, including `shot_corridor_{lit,dim,dark,derelict}_rt.png` |
+| `captures/shots/` | RT on/off pairs, including `shot_corridor_{lit,dim,dark,derelict}_rt.png` and `shot_{broken_ceiling,steam,low_pipe,beacon}_rt.png` |
 | `captures/bench_walk/bench.log` | Window-mode timing over the whole walk, by mood |
 | `captures/bench/bench.log` | Short window-mode timing (smoke) |
 
@@ -98,4 +123,22 @@ shaders/     trace.hlsl (path tracer, cs_6_5 RayQuery), present.hlsl (AgX tonema
 art/blender  kit generator scripts and the .blend
 assets/      exported kit (.glb) + manifest
 tests/       unit tests, PNG checker, ctest definitions
+package/     PLAY.txt and third-party notices that go in the download
+cmake/       shader compiler lookup; PackageZip / CheckPackage (the download); TestSummary
+.github/     the GitHub Actions build: unit tests, the zip, the release
 ```
+
+## Releases
+
+`.github/workflows/build.yml` runs on every push to `master`. It builds on a clean
+Windows machine, runs the unit tests, packs the zip (`cmake/PackageZip.cmake`), unpacks it
+into an empty folder and starts it from there (`cmake/CheckPackage.cmake`: `--help`, and
+`--check`, which loads the models from beside the EXE and builds a ship without a GPU). It
+then publishes the zip as release `build-<n>`. GitHub's machines have no ray-tracing GPU, so
+the capture tests run on the development PC. `ctest -L package` there does the same
+unpack-and-run check, plus a short ray-traced capture.
+
+## Copyright
+
+Copyright © 2026 Tiny Moosh Games Inc. All rights reserved. Third-party code (stb, cgltf)
+is under its own licenses; see `package/THIRD_PARTY_NOTICES.txt`.

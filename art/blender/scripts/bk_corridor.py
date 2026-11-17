@@ -359,13 +359,99 @@ def floor(pc, open_sides):
             pc.round.cyl(p0, p1, r, m, seg=12, caps=(False, False))
 
 
-def ceiling(pc, open_sides, kind):
+HOLE = (-0.62, 0.82, 0.62, 1.72)   # broken ceiling: the open hole (x0, y0, x1, y1)
+CAVITY = 0.48                      # how deep the space above the ceiling is
+
+
+def broken_ceiling(pc):
+    """The north ceiling tile of a straight corridor torn open: a cavity with ducts above,
+    one panel hanging from its hinge, the light fixture dangling on its cables, and loose
+    cables with bare ends (spark markers)."""
+    down = V3(0, 0, -1)
+    a = 0.75
+    x0, y0, x1, y1 = HOLE
+    # what is left of the tile around the hole
+    for sx0, sy0, sx1, sy1 in ((-a, a, a, y0), (-a, y1, a, E), (-a, y0, x0, y1), (x1, y0, a, y1)):
+        pc.main.face([V3(sx0, sy0, CEIL), V3(sx1, sy0, CEIL), V3(sx1, sy1, CEIL), V3(sx0, sy1, CEIL)], 'PanelLight',
+                     toward=down)
+    # torn edge: the panel's thickness shows round the hole
+    t = 0.03
+    for p0, p1, inward in (((x0, y0), (x1, y0), V3(0, 1, 0)), ((x1, y0), (x1, y1), V3(-1, 0, 0)),
+                           ((x1, y1), (x0, y1), V3(0, -1, 0)), ((x0, y1), (x0, y0), V3(1, 0, 0))):
+        pc.main.face([V3(*p0, CEIL), V3(*p1, CEIL), V3(*p1, CEIL + t), V3(*p0, CEIL + t)], 'PanelGrey', toward=inward)
+    # the cavity: dark walls and a lid, seen from below
+    zt = CEIL + CAVITY
+    for p0, p1, inward in (((x0, y0), (x1, y0), V3(0, 1, 0)), ((x1, y0), (x1, y1), V3(-1, 0, 0)),
+                           ((x1, y1), (x0, y1), V3(0, -1, 0)), ((x0, y1), (x0, y0), V3(1, 0, 0))):
+        pc.main.face([V3(*p0, CEIL + t), V3(*p1, CEIL + t), V3(*p1, zt), V3(*p0, zt)], 'Recess', toward=inward)
+    pc.main.face([V3(x0, y0, zt), V3(x1, y0, zt), V3(x1, y1, zt), V3(x0, y1, zt)], 'Recess', toward=down)
+    # ducts and a beam running through it
+    pc.round.cyl(V3(-0.3, y0, CEIL + 0.27), V3(-0.3, y1, CEIL + 0.27), 0.11, 'DarkSteel', seg=20, caps=(False, False))
+    pc.round.cyl(V3(0.22, y0, CEIL + 0.33), V3(0.22, y1, CEIL + 0.33), 0.065, 'Copper', seg=16, caps=(False, False))
+    pc.round.cyl(V3(0.42, y0, CEIL + 0.2), V3(0.42, y1, CEIL + 0.2), 0.035, 'PipeRed', seg=12, caps=(False, False))
+    pc.fine.box((x0, 1.22, CEIL + 0.4), (x1, 1.3, zt), 'Gunmetal')
+    # one panel hanging down from its hinge on the south edge, a little twisted
+    from mathutils import Matrix as _M
+    hinge = V3(-0.02, y0 + 0.02, CEIL - 0.012)
+    R = _M.Rotation(math.radians(-62), 3, 'X') @ _M.Rotation(math.radians(9), 3, 'Y')
+    c = hinge + R @ V3(0, 0.42, 0)
+    pc.main.obox(c, (0.58, 0.84, 0.024), 'PanelLight', rot=R, mats={'+z': 'PanelGrey'})
+    # the light fixture, torn loose, hanging at an angle on two cables
+    top, bot = V3(0.36, 1.58, 2.62), V3(0.43, 0.98, 2.05)
+    axis = (bot - top)
+    L = axis.length
+    # twisted on its cables so the lit face turns toward the walkway (west, a little down)
+    yax = axis.normalized()
+    want = V3(-0.85, -0.15, -0.5)
+    lit_n = (want - yax * want.dot(yax)).normalized()
+    zax = -lit_n
+    Rf = _M((yax.cross(zax).normalized(), yax, zax)).transposed()
+    fc = (top + bot) * 0.5
+    faces = pc.fine.obox(fc, (0.34, L, 0.075), 'Gunmetal', rot=Rf)
+    lit = faces['-z']
+    pc.fine.inset(lit, 0.03, 0.0)
+    pc.fine.inset(lit, 0.004, 0.01, rim_mat='DarkSteel', inner_mat='LightWhite')
+    # weaker than a mounted fixture: it hangs right next to the dropped panel
+    pc.light((fc.x - 0.05, fc.y - 0.2, fc.z - 0.25), power=60.0, radius=0.15)
+    for end in (top + Rf @ V3(0.12, 0, 0.03), bot + Rf @ V3(-0.12, 0, 0.03)):
+        anchor = V3(end.x * 0.6, (end.y + 1.27) * 0.5, CEIL + 0.3)
+        mid = (anchor + end) * 0.5 + V3(0.03, 0, -0.06)
+        pc.round.tube([anchor, mid, end], 0.008, 'CableBlack', seg=6)
+    pc.marker('spark0', bot + V3(0, -0.04, -0.03), (0, -0.3, -1))
+    # loose cables: two sagging loops and three bare ends hanging down
+    rng = pc.rng
+    for k, (xa, xb, low, mat) in enumerate(((-0.5, -0.1, 2.25, 'CableRed'), (-0.45, 0.05, 2.32, 'CableYellow'))):
+        ya, yb = 0.95 + 0.25 * k, 1.55 - 0.15 * k
+        pts = []
+        for i in range(9):
+            s = i / 8
+            x = xa + (xb - xa) * s
+            y = ya + (yb - ya) * s
+            z = CEIL + 0.15 - (CEIL + 0.15 - low) * math.sin(math.pi * s)
+            pts.append(V3(x, y, z))
+        pc.round.tube(pts, 0.011, mat, seg=8)
+    for k, (x, y, z_end, mat) in enumerate(((-0.25, 1.1, 2.02, 'CableBlue'), (-0.05, 1.42, 1.96, 'CableBlack'),
+                                            (-0.38, 1.6, 2.18, 'CableRed'))):
+        pts = [V3(x, y, CEIL + 0.2)]
+        for i in range(1, 6):
+            s = i / 5
+            pts.append(V3(x + 0.03 * math.sin(s * 3 + k) + rng.uniform(-0.01, 0.01), y + 0.04 * s,
+                          CEIL + 0.2 - (CEIL + 0.2 - z_end) * s))
+        pc.round.tube(pts, 0.012, mat, seg=8)
+        tip = pts[-1]
+        pc.fine.cyl(tip, tip + V3(0, 0, -0.035), 0.006, 'Copper', seg=8)
+        pc.marker(f'spark{k + 1}', tip + V3(0, 0, -0.04), (0, 0, -1))
+
+
+def ceiling(pc, open_sides, kind, broken=False):
     down = V3(0, 0, -1)
     a = 0.75
     tiles = [(-a, -a, a, a)]
     for s in open_sides:
         d = SIDE_DIR[s]
         if d.y > 0:
+            if broken:
+                continue
             tiles.append((-a, a, a, E))
         elif d.y < 0:
             tiles.append((-a, -E, a, -a))
@@ -386,7 +472,10 @@ def ceiling(pc, open_sides, kind):
         pc.light((cx, cy, CEIL - 0.3), power=160.0, radius=0.18)
 
     if kind == 'straight':
-        fixture(0, 1.0, 0.34, 1.1)
+        if broken:
+            broken_ceiling(pc)
+        else:
+            fixture(0, 1.0, 0.34, 1.1)
         fixture(0, -1.0, 0.34, 1.1)
     else:
         fixture(0, 0, 0.62, 0.62)
@@ -438,15 +527,17 @@ def end_feature(pc):
     pc.flat.obox(bay.p(s + 0.42, 0.0955, 1.78), (0.06, 0.06, 0.002), 'LightRed', rot=R)
 
 
-def build_corridor(kind, parent):
+def build_corridor(kind, parent, broken=False):
+    """broken (straight only): the derelict variant corridor_straight_broken, with the
+    north ceiling tile torn open (see broken_ceiling)."""
     open_sides, polys = TYPES[kind]
-    pc = Piece('corridor_' + kind)
+    pc = Piece('corridor_' + kind + ('_broken' if broken else ''), seed='corridor_' + kind)
     # keep the dead-end wall clear for the sealed hatch
     skip = (lambda bay: abs(bay.d.x) > 0.5) if kind == 'end' else None
     for poly in polys:
         wall_run(pc, poly, skip_detail=skip)
     floor(pc, open_sides)
-    ceiling(pc, open_sides, kind)
+    ceiling(pc, open_sides, kind, broken)
     ribs(pc, open_sides, kind)
     if kind == 'end':
         end_feature(pc)

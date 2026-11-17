@@ -31,6 +31,7 @@ std::string usageText() {
         "  Bulkhead.exe --bench <dir>            headless: play the walk in real time like the window does,\n"
         "                                        report frame times, save sample frames\n"
         "  Bulkhead.exe --overhead <file.png>    write the top-down map of the maze (no GPU)\n"
+        "  Bulkhead.exe --check                  load the models and build a ship, then report (no GPU)\n"
         "\n"
         "Options:\n"
         "  --seed N          maze seed (capture/overhead default 1234, window default random)\n"
@@ -43,6 +44,7 @@ std::string usageText() {
         "  --rt on|off       ray tracing (default on)\n"
         "  --exposure X      exposure multiplier (default 1)\n"
         "  --flashlight on|off  the flashlight under the gun (default on)\n"
+        "  --scene walk|fire    capture: the walk start -> exit (default), or standing and firing six shots\n"
         "  --haze X          haze density multiplier (default 1, 0 = none)\n"
         "  --no-hud          hide crosshair and minimap\n"
         "  --assets DIR      kit folder (default: found next to the executable or in the source tree)\n"
@@ -50,8 +52,9 @@ std::string usageText() {
         "  --debug           enable the D3D12 debug layer\n"
         "  --help            this text\n"
         "\n"
-        "Window: WASD move, mouse look, Shift run, click to grab the mouse, Esc release (twice: quit),\n"
-        "        F flashlight, M map, R ray tracing on/off, H HUD, N new ship, F12 screenshot.\n";
+        "Window: WASD move, mouse look, left click fire, Ctrl (or C) crouch, Shift run, click to grab the\n"
+        "        mouse, Esc release (twice: quit), F flashlight, M map, R ray tracing on/off, H HUD,\n"
+        "        N new ship, F12 screenshot.\n";
 }
 
 std::optional<Options> parseCommandLine(int argc, char** argv, std::string& error) {
@@ -72,6 +75,8 @@ std::optional<Options> parseCommandLine(int argc, char** argv, std::string& erro
 
         if (a == "--help" || a == "-h" || a == "/?") {
             o.mode = Options::Mode::Help;
+        } else if (a == "--check") {
+            o.mode = Options::Mode::Check;
         } else if (a == "--capture" || a == "--overhead" || a == "--shots" || a == "--bench") {
             auto v = value();
             if (!v) return std::nullopt;
@@ -80,6 +85,11 @@ std::optional<Options> parseCommandLine(int argc, char** argv, std::string& erro
                      : a == "--bench" ? Options::Mode::Bench
                                       : Options::Mode::Overhead;
             o.output = std::filesystem::path(std::string(*v));
+        } else if (a == "--scene") {
+            auto v = value();
+            if (!v) return std::nullopt;
+            if (*v != "walk" && *v != "fire") return bad(*v);
+            o.scene = std::string(*v);
         } else if (a == "--assets") {
             auto v = value();
             if (!v) return std::nullopt;

@@ -15,8 +15,9 @@ Custom C++20 engine on DirectX 12 with DXR ray tracing (RTX 4090 Laptop GPU, ray
 | 4 | Build the maze from the kit; ray-traced lighting | **Done (round 4)**: inline-RT path tracer (see Rendering) |
 | 5 | First-person walking with collision, doors that open, gun viewmodel, scripted walk-through capture | **Done (round 4)** |
 | 6 | Part 2, round 5: 40 × 40 ship split into sections with moods (lit, dim, dark, derelict); lights that flicker, strobe, die or pulse red; flashlight; procedural grime and rust; haze with lit beams; zoomed minimap that only shows explored cells; slower camera bob; timing run by mood | **Done (round 5)**: see Sections and moods |
-| 7 | Round 6: derelict Blender pieces (broken ceiling panels, hanging wires, open pipe ends, low pipes, debris, beacons), sparks, steam, crouch, planned film route | |
-| 8 | Round 7: arms holding the gun, firing (muzzle flash light, bolt, impacts, recoil) | |
+| 7 | Round 6: derelict Blender pieces (broken ceiling panels, hanging wires, open pipe ends, low pipes, debris, beacons), sparks, steam, crouch, the long walk film | **Done (rounds 6-7)**: see Derelict dressing and the gun |
+| 8 | Round 7: arms holding the gun, firing (muzzle flash light, bolt, impacts, recoil) | **Done (rounds 6-7)** |
+| - | Download: GitHub Actions builds every push to master and publishes `Bulkhead-windows-x64.zip` as a release | **Done** (`.github/workflows/build.yml`, `cmake/PackageZip.cmake`, `cmake/CheckPackage.cmake`) |
 | 9 | Round 8: the creature (rigid armoured plates, Blender rig and crawl cycle), crawling on floors, walls and ceilings | |
 | 10 | Round 9: hunting AI, leap, player death; four hits to kill | |
 | 11 | Round 10: game loop with several creatures; full film pass | |
@@ -73,6 +74,50 @@ The ship is 40 × 40 cells (160 m square, about 1500 walkable cells, 4000 placed
   openings, and through doors while they are open).
 - **Camera bob:** one bob per footstep at `1.55 + 0.17 × speed` steps a second (2.0 Hz on the
   scripted walk, was 3.5), with a small sideways sway at half that rate.
+
+## Derelict dressing and the gun (rounds 6-7)
+
+**Pieces** (Blender: `bk_corridor.py` broken variant, `bk_derelict.py`, `bk_arms.py`):
+- `corridor_straight_broken` has the north ceiling tile torn open, showing ducts in the space above. One panel hangs from its hinge, the light fixture dangles on two cables, and there are sagging cable loops and bare ends.
+- `pipes_low` is a hazard-striped bundle across the corridor, 1.30 m clear underneath. `pipe_burst` is a torn coolant pipe with jagged ends, rust runs and a puddle. `debris` is a fallen panel, chunks and a bent conduit. `beacon` is a red emergency lamp with its own light.
+- `arms` are armoured gloves and suit sleeves in a two-handed grip, modelled in the gun's space. `muzzle_flash`, `bolt`, `spark` and `scorch` are the effect meshes.
+- **Effect markers:** empties named `<piece>_fx_<name>` (`spark0..3`, `steam`, `muzzle`) are exported as glTF nodes. `Kit` reads them into `KitModel::markers`.
+
+**Placement by mood** (`Level.cpp`) uses its own `Rng` stream, so the room walls and props are unchanged:
+
+| | Lit | Dim | Dark | Derelict |
+|---|---|---|---|---|
+| broken ceiling (straight cells) | — | 5% | 10% | 35% |
+| burst steam pipe | — | 10% | 8% | 20% |
+| debris | — | 6% | 12% | 30% |
+| beacon | — | — | 30% | 4% |
+
+Low pipes go in two straight cells on the walk route, about a third and two thirds of the way and outside lit sections, so the film always ducks under one. Each other non-lit straight cell has a 3% chance of one. Seed 1234 has 64 broken ceilings, 46 steam pipes, 63 debris piles, 28 beacons, 7 low pipes, 256 spark emitters and 46 steam emitters.
+
+**Crouching:**
+- Collision boxes have an optional `bottom`. Overhead boxes only block bodies taller than that: standing is 1.85 m, crouching 1.2 m.
+- In the window, Ctrl or C crouches; the eye drops from 1.7 to 1.05 m and speed halves. Walking into a pipe standing up stops you. Once under it, you stay crouched until you're clear.
+- The scripted walk crouches within about 2 m of a low pipe and slows to 1.25 m/s there. A distance-to-time table keeps the walk deterministic.
+
+**Effects:** all of them are a pure function of time, so captures are repeatable and `setWalkTime` can jump anywhere.
+- **Sparks:** each spark emitter may burst once per 0.45 s slot (about every 2.5 s). A burst throws 16 streaks along analytic paths, each bouncing once off the floor, plus a 0.16 s orange flash light.
+- **Steam:** steam emitters hiss on and off per 3.2 s slot. Each frame the CPU sums the light falling on every plume within 24 m.
+- **Short-lived lights:** up to 16 a frame (spark flashes, the muzzle, bolts, impacts), sorted by brightness over distance. The renderer shades every pixel with them, shadowed on primary hits. The brightest also lights the haze.
+- **Steam rendering:** a buoyant, widening cone with animated fBm turbulence, ray-marched in 14 steps inside its bounding sphere. It is lit by the fixtures, the flashlight and the short-lived lights.
+
+**The gun:**
+- **Firing:** left click fires every 0.28 s. The camera ray finds what the crosshair is on (`raycastLevel`: floor, ceiling and collision boxes, stepped and refined by bisection). A 70 m/s bolt then flies there from the muzzle.
+- **Impacts and flash:** on arrival there are impact sparks, a 0.14 s cyan flash light, and a scorch decal that stays (the 48 newest). The muzzle flash mesh shows for 50 ms with a random roll and size, plus a 70 ms light.
+- **Recoil:** the gun kicks back and up over about 0.1 s, and the aim kicks up 0.012 rad.
+- **Viewmodel:** the arms share the gun's matrix. It sits 12.5 cm right, 13 cm down and 34 cm ahead of the eye.
+- **Ray masks:** sparks and bolts have their own instance mask (`0x08`). Primary rays see them; shadow and bounce rays ignore them.
+
+**Captures:**
+- `--scene fire` stands in a dark corridor and fires six shots at walls and floor, easing the aim between targets (`film_fire`, 180 frames).
+- `--shots` adds `broken_ceiling`, `steam`, `low_pipe` and `beacon`.
+- The long walk (`film_walkthrough_a`/`_b`) ducks under both route pipes, at 71 s in a dim section and 140 s in a derelict one.
+
+Timing run after rounds 6-7: median 6.7 ms (lit 7.5, dim 7.6, derelict 5.8, dark 5.4 ms).
 
 ## Rendering (round 4)
 

@@ -238,6 +238,9 @@ def build_gun(parent):
         glow.face([V3(x0, -0.0799, 0.0245), V3(x0 + 0.0034, -0.0799, 0.0245), V3(x0 + 0.0034, -0.0799, 0.0315),
                    V3(x0, -0.0799, 0.0315)], 'LightTeal' if k < 4 else 'LightAmber', toward=V3(0, -1, 0))
 
+    # where bolts and the muzzle flash come from (engine: Kit markers)
+    pc.marker('muzzle', V3(0, 0.168, 0.022), (0, 1, 0))
+
     pc.extra_objects.append(('body', body, 0.0028))
     pc.extra_objects.append(('grip', grip_b, 0.002))
     pc.extra_objects.append(('guard', guard, 0.0011))

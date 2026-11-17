@@ -73,6 +73,16 @@ PALETTE = {
     'LightAmber':   dict(c='ffffff', m=0.0, r=0.3, e='ffa01c', es=9.0),
     'Screen':       dict(c='061017', m=0.0, r=0.2, e='1fbfff', es=3.0),
     'ScreenDim':    dict(c='061017', m=0.0, r=0.2, e='0c4f6e', es=2.0),
+    # round 6-7: derelict pieces, effects, the player's arms
+    'Rust':         dict(c='5e2a12', m=0.3, r=0.8),
+    'Soot':         dict(c='080807', m=0.0, r=0.95),
+    'Glove':        dict(c='242523', m=0.0, r=0.72),
+    'GloveArmor':   dict(c='474c50', m=0.65, r=0.36),
+    'SuitFabric':   dict(c='3b4136', m=0.0, r=0.86),
+    'SuitPlate':    dict(c='8a8e86', m=0.15, r=0.48),
+    'LightSpark':   dict(c='ffffff', m=0.0, r=0.3, e='ffb35a', es=60.0),
+    'LightBolt':    dict(c='ffffff', m=0.0, r=0.3, e='86ecff', es=70.0),
+    'LightFlash':   dict(c='ffffff', m=0.0, r=0.3, e='c8f6ff', es=90.0),
 }
 
 
@@ -572,10 +582,16 @@ class Piece:
         self.round = Builder()   # pipes and cylinders: smooth, sharp only at mitres
         self.lights = []         # (name, location, power W, radius, colour)
         self.extra_objects = []  # (name, Builder, bevel) separately exported nodes
+        self.markers = []        # (name, location, direction): empties named <piece>_fx_<name>
         self.rng = random.Random(seed if seed is not None else name)
 
     def light(self, loc, power=120.0, radius=0.12, color=(1.0, 0.97, 0.93), name=None):
         self.lights.append((name or f'L{len(self.lights)}', Vector(loc), power, radius, color))
+
+    def marker(self, name, loc, direction=(0, 0, -1)):
+        """An effect anchor for the engine (sparks, steam, the muzzle): an empty whose
+        local +Y points along `direction`. Exported as glTF node <piece>_fx_<name>."""
+        self.markers.append((name, Vector(loc), Vector(direction).normalized()))
 
     def finish(self, parent):
         coll = collection('KIT_' + self.name, parent)
@@ -601,4 +617,25 @@ class Piece:
             lo = bpy.data.objects.new(f'{self.name}_{nm}', ld)
             lo.location = loc
             coll.objects.link(lo)
+        for nm, loc, d in self.markers:
+            em = bpy.data.objects.new(f'{self.name}_fx_{nm}', None)
+            em.empty_display_type = 'SINGLE_ARROW'
+            em.empty_display_size = 0.15
+            em.location = loc
+            em.rotation_mode = 'QUATERNION'
+            em.rotation_quaternion = d.to_track_quat('Y', 'Z')
+            coll.objects.link(em)
         return coll
+
+
+def sphere(b, center, r, mat, seg=12, rings=6, M=None):
+    """A UV sphere added to Builder b."""
+    prof = [(0.0, -r)]
+    for i in range(1, rings):
+        a = -math.pi / 2 + math.pi * i / rings
+        prof.append((r * math.cos(a), r * math.sin(a)))
+    prof.append((0.0, r))
+    T = Matrix.Translation(Vector(center))
+    if M is not None:
+        T = M @ T
+    b.lathe(prof, mat, seg=seg, M=T)

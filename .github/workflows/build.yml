@@ -1,0 +1,89 @@
+# Builds Bulkhead on a clean Windows machine on GitHub, runs the tests that need no GPU,
+# packs the game into one zip, checks that zip from an empty folder, and publishes it as a
+# release, so anyone can download it without a GitHub account:
+#
+#   https://github.com/glenwrhodes/Bulkhead/releases/latest/download/Bulkhead-windows-x64.zip
+#
+# GitHub's machines have no ray-tracing GPU, so the capture tests (labels smoke, film,
+# bench) run on the development PC only. Here the packed EXE is started in its CPU-only
+# modes (--help, --check), which prove it starts and loads its own models.
+#
+# Runs on every push to master, and by hand (Actions tab -> Build -> Run workflow).
+
+name: Build
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # to publish the release
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: Windows x64
+    runs-on: windows-2022   # Visual Studio 2022 and the Windows SDK (dxc), as on the development PC
+    timeout-minutes: 60
+    # bash (Git Bash): stops a step at the first failing command; every -D argument is quoted whole.
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+
+      - name: Configure
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test (no GPU)
+        run: ctest --test-dir build -C Release -L unit --output-on-failure --no-tests=error --output-junit junit.xml
+
+      - name: Test results table
+        if: always() && hashFiles('build/junit.xml') != ''
+        run: cmake "-DJUNIT=build/junit.xml" "-DOUT=$GITHUB_STEP_SUMMARY" -P cmake/TestSummary.cmake
+
+      - name: Pack the zip
+        run: cmake "-DBUILD=build" "-DOUT=dist" "-DCONFIG=Release" -P cmake/PackageZip.cmake
+
+      - name: Check the zip from an empty folder
+        run: cmake "-DZIP=dist/Bulkhead-windows-x64.zip" "-DWORK=package_check" "-DOUT=$GITHUB_STEP_SUMMARY" -P cmake/CheckPackage.cmake
+
+      - name: Keep the zip with the run
+        uses: actions/upload-artifact@v5
+        with:
+          name: Bulkhead-windows-x64
+          path: dist/Bulkhead-windows-x64.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      # A numbered release per build; "latest" always points at the newest, so the README's
+      # download link never changes.
+      - name: Publish the release
+        if: github.ref == 'refs/heads/master'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="build-${GITHUB_RUN_NUMBER}"
+          short="${GITHUB_SHA:0:7}"
+          notes="Bulkhead, build ${GITHUB_RUN_NUMBER} (commit ${short}).
+
+          Download **Bulkhead-windows-x64.zip**, unzip it anywhere and run \`Bulkhead\\Bulkhead.exe\`. Nothing needs installing.
+
+          Needs Windows 10 (2004+) or 11, 64-bit, and a graphics card with hardware ray tracing (DXR 1.1): NVIDIA RTX 20-series or newer, AMD RX 6000-series or newer, or Intel Arc. Controls are in PLAY.txt.
+
+          Copyright (c) 2026 Tiny Moosh Games Inc."
+          gh release create "$tag" dist/Bulkhead-windows-x64.zip \
+            --target "$GITHUB_SHA" \
+            --title "Bulkhead build ${GITHUB_RUN_NUMBER}" \
+            --notes "$notes" \
+            --latest
+          echo "Released [$tag](https://github.com/${GITHUB_REPOSITORY}/releases/tag/$tag): https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/Bulkhead-windows-x64.zip" >> "$GITHUB_STEP_SUMMARY"
