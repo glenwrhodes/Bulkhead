@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <stdexcept>
+#include <vector>
 
 namespace bh {
 namespace {
@@ -45,11 +46,20 @@ Window::Window(const std::string& title, int clientWidth, int clientHeight) {
 
     hwnd_ = CreateWindowExW(0, kClassName, widen(title).c_str(), style, x, y, w, h, nullptr, nullptr, instance, this);
     if (!hwnd_) throw std::runtime_error("CreateWindowExW failed");
+
+    RAWINPUTDEVICE rid{};
+    rid.usUsagePage = 0x01;  // generic desktop
+    rid.usUsage = 0x02;      // mouse
+    rid.hwndTarget = hwnd_;
+    RegisterRawInputDevices(&rid, 1, sizeof(rid));
+
     ShowWindow(hwnd_, SW_SHOWNORMAL);
     UpdateWindow(hwnd_);
+    SetForegroundWindow(hwnd_);
 }
 
 Window::~Window() {
+    setMouseCaptured(false);
     if (hwnd_) DestroyWindow(hwnd_);
     UnregisterClassW(kClassName, GetModuleHandleW(nullptr));
 }
@@ -72,6 +82,37 @@ void Window::clientSize(uint32_t& width, uint32_t& height) const {
     height = uint32_t(std::max<LONG>(0, r.bottom - r.top));
 }
 
+bool Window::focused() const { return GetForegroundWindow() == hwnd_; }
+
+bool Window::keyDown(int vk) const { return focused() && (GetAsyncKeyState(vk) & 0x8000) != 0; }
+
+void Window::setMouseCaptured(bool captured) {
+    if (captured == captured_) return;
+    captured_ = captured;
+    if (captured) {
+        RECT r;
+        GetClientRect(hwnd_, &r);
+        POINT tl{r.left, r.top}, br{r.right, r.bottom};
+        ClientToScreen(hwnd_, &tl);
+        ClientToScreen(hwnd_, &br);
+        RECT clip{tl.x, tl.y, br.x, br.y};
+        ClipCursor(&clip);
+        while (ShowCursor(FALSE) >= 0) {
+        }
+    } else {
+        ClipCursor(nullptr);
+        while (ShowCursor(TRUE) < 0) {
+        }
+    }
+    mouseDx_ = mouseDy_ = 0.0f;
+}
+
+void Window::takeMouseDelta(float& dx, float& dy) {
+    dx = mouseDx_;
+    dy = mouseDy_;
+    mouseDx_ = mouseDy_ = 0.0f;
+}
+
 LRESULT CALLBACK Window::wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (msg == WM_NCCREATE) {
         auto* cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
@@ -86,6 +127,34 @@ LRESULT CALLBACK Window::wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
             case WM_KEYDOWN:
                 if ((lParam & (1 << 30)) == 0 && self->onKeyDown) self->onKeyDown(int(wParam));
                 return 0;
+            case WM_LBUTTONDOWN:
+                self->setMouseCaptured(true);
+                return 0;
+            case WM_ACTIVATE:
+                if (LOWORD(wParam) == WA_INACTIVE) self->setMouseCaptured(false);
+                break;
+            case WM_SIZE:
+            case WM_MOVE:
+                if (self->captured_) {  // re-clip to the new rectangle
+                    self->setMouseCaptured(false);
+                    self->setMouseCaptured(true);
+                }
+                break;
+            case WM_INPUT: {
+                UINT size = 0;
+                GetRawInputData(reinterpret_cast<HRAWINPUT>(lParam), RID_INPUT, nullptr, &size, sizeof(RAWINPUTHEADER));
+                std::vector<BYTE> buf(size);
+                if (size && GetRawInputData(reinterpret_cast<HRAWINPUT>(lParam), RID_INPUT, buf.data(), &size,
+                                            sizeof(RAWINPUTHEADER)) == size) {
+                    const RAWINPUT* ri = reinterpret_cast<const RAWINPUT*>(buf.data());
+                    if (ri->header.dwType == RIM_TYPEMOUSE && self->captured_ &&
+                        !(ri->data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE)) {
+                        self->mouseDx_ += float(ri->data.mouse.lLastX);
+                        self->mouseDy_ += float(ri->data.mouse.lLastY);
+                    }
+                }
+                break;
+            }
             case WM_ERASEBKGND:
                 return 1;
             default:

@@ -31,6 +31,29 @@ milestone status are in `docs/PLAN.md`; update that table when a milestone lands
   earlier MCP call, because the viewport redraws after a call returns. Don't minimise Blender:
   its screenshots go black.
 
+## Engine notes
+
+- Rendering is an inline ray tracer (`shaders/trace.hlsl`, RayQuery, cs_6_5). The design is
+  in `docs/PLAN.md` (Rendering).
+- glTF fronts are counter-clockwise in right-handed space. Do **not** set
+  `D3D12_RAYTRACING_INSTANCE_FLAG_TRIANGLE_FRONT_COUNTERCLOCKWISE`: with it, primary rays
+  cull every front face and the level renders inside out.
+- World space: X east, Y up, Z south. Maze cell (x, y) is centred at (4x, 0, 4y). Kit
+  pieces are rotated with `Mat4::rotationY(yawFor(dir))`; see `src/world/Level.cpp`.
+- Headless modes: `--capture` (the walk as PNGs), `--shots` (RT on/off pairs at fixed
+  viewpoints), `--bench` (window-mode frame times in `bench.log`), `--overhead`.
+  The window itself can't be watched here: `--bench` is how window-mode quality (noise,
+  ghosting) and speed get checked. ctest `bench_static` (label `diag`) holds the camera
+  still to check that accumulation converges.
+- Never pack integers into float render targets with `asfloat()`: small integers become
+  denormals, and the store flushes them to zero. (This silently broke temporal
+  accumulation once.) Store `float(id)` instead.
+- Don't leave Blender's viewport in Rendered mode while capturing: it competes for the GPU.
+- A ctest run in the foreground is cut off after 10 minutes, and background runs after
+  another 10. The full 1080p walk (~1000 frames) has to stay inside that. If a run is
+  stopped, its `Bulkhead.exe` can keep running and lock the exe for the next build:
+  wait for it to finish.
+
 ## Conventions
 
 - Code compiles with `/W4 /WX`. Keep it warning-free.

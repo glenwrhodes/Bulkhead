@@ -39,6 +39,7 @@ plus `assets/kit_manifest.json`, and saves `bulkhead_kit.blend`. It takes about 
   - `door_bulkhead` and `door_airlock`: node `Leaf`, which slides 2.4 m up.
 - **Room walls** are modelled on the cell's south edge, facing north. Two walls at a room corner overlap exactly, and `room_corner` covers the joint. `room_wall_door` has the corridor-shaped opening that `door_frame` plugs.
 - **Props** have their origin on the floor at the centre. The handgun's origin is at the grip; forward is +Y and up is +Z. Its rear charge display (5 segments) faces the player.
+- **Handgun parts** (round 4): a solid moulded trigger guard and bladed trigger, stippled grip panels, a beavertail, a magazine baseplate and a release button (node `handgun_guard`). In the engine it is drawn as a viewmodel attached to the camera.
 - **Materials**: one shared palette named `BH_*`, flat PBR values (no textures). Every material is single-sided except `BH_Glass`, which is alpha-blended. Emissive materials (`BH_Light*`, `BH_Screen*`) mark light sources.
 - Corridor and room-ceiling pieces include **point lights** (KHR_lights_punctual) at the fixtures.
 

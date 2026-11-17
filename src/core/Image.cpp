@@ -86,6 +86,12 @@ void Image::strokeCircle(float cx, float cy, float r, float thickness, Color c) 
 }
 
 namespace {
+// PNG level 5 is about 3x faster than stb's default 8 for ~10% bigger files. Set once at
+// start-up: captures encode frames on several threads.
+struct PngLevel {
+    PngLevel() { stbi_write_png_compression_level = 5; }
+} g_pngLevel;
+
 void writeToStream(void* context, void* data, int size) {
     static_cast<std::ofstream*>(context)->write(static_cast<const char*>(data), size);
 }

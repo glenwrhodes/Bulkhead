@@ -603,14 +603,16 @@
         "handgun_pipes",
         "handgun_body",
         "handgun_grip",
+        "handgun_guard",
         "handgun_detail",
         "handgun_glow"
       ],
-      "triangles": 9978,
+      "triangles": 21694,
       "materials": [
         "BH_AccentOrange",
         "BH_DarkSteel",
         "BH_Gunmetal",
+        "BH_LightAmber",
         "BH_LightGreen",
         "BH_LightTeal",
         "BH_PaintDark",
@@ -622,7 +624,7 @@
         "BH_Steel"
       ],
       "lights": 0,
-      "bytes": 315604
+      "bytes": 598980
     }
   }
 }

@@ -28,6 +28,15 @@ add_library(bh_stb STATIC third_party/stb_impl.cpp)
 target_include_directories(bh_stb SYSTEM PUBLIC ${stb_SOURCE_DIR})
 set_target_properties(bh_stb PROPERTIES FOLDER third_party)
 
+# cgltf (glTF / .glb loader), pinned to a release tag.
+FetchContent_Declare(cgltf
+  URL https://github.com/jkuhlmann/cgltf/archive/refs/tags/v1.14.tar.gz
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+FetchContent_MakeAvailable(cgltf)
+add_library(bh_cgltf STATIC third_party/cgltf_impl.cpp)
+target_include_directories(bh_cgltf SYSTEM PUBLIC ${cgltf_SOURCE_DIR})
+set_target_properties(bh_cgltf PROPERTIES FOLDER third_party)
+
 # ---------------------------------------------------------------------------
 # Shader compiler: dxc.exe from the Windows SDK (not on PATH on this machine).
 # ---------------------------------------------------------------------------
@@ -42,22 +51,31 @@ function(bulkhead_settings target)
     WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE _CRT_SECURE_NO_WARNINGS)
 endfunction()
 
-# Platform-independent library: image I/O, logging, maze generation, overhead map.
+# Platform-independent library (no D3D12): image I/O, logging, maze generation, overhead
+# map, kit loading, level building, collision, the scripted walk and the game state.
 # Linked by the game and by the unit tests.
 add_library(bulkhead_lib STATIC
   src/core/Image.cpp       src/core/Image.h
   src/core/Log.cpp         src/core/Log.h
+  src/core/Math.h
+  src/assets/Kit.cpp       src/assets/Kit.h
   src/world/Random.h
   src/world/Maze.cpp       src/world/Maze.h
   src/world/OverheadMap.cpp src/world/OverheadMap.h
-  src/world/PathTrack.cpp  src/world/PathTrack.h)
+  src/world/PathTrack.cpp  src/world/PathTrack.h
+  src/world/Collision.cpp  src/world/Collision.h
+  src/world/Level.cpp      src/world/Level.h
+  src/world/WalkPath.cpp   src/world/WalkPath.h
+  src/game/Game.cpp        src/game/Game.h)
 target_include_directories(bulkhead_lib PUBLIC src)
-target_link_libraries(bulkhead_lib PUBLIC bh_stb)
+target_link_libraries(bulkhead_lib PUBLIC bh_stb bh_cgltf)
+target_compile_definitions(bulkhead_lib PRIVATE BULKHEAD_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 bulkhead_settings(bulkhead_lib)
 
-# HLSL -> embedded bytecode headers.
-bulkhead_compile_shader(FULLSCREEN_VS shaders/fullscreen.hlsl VSMain vs_6_0 g_FullscreenVS)
-bulkhead_compile_shader(FULLSCREEN_PS shaders/fullscreen.hlsl PSMain ps_6_0 g_FullscreenPS)
+# HLSL -> embedded bytecode headers. The tracer uses inline ray tracing (SM 6.5).
+bulkhead_compile_shader(TRACE_CS   shaders/trace.hlsl   CSMain cs_6_5 g_TraceCS)
+bulkhead_compile_shader(PRESENT_VS shaders/present.hlsl VSMain vs_6_0 g_PresentVS)
+bulkhead_compile_shader(PRESENT_PS shaders/present.hlsl PSMain ps_6_0 g_PresentPS)
 
 add_executable(Bulkhead
   src/main.cpp
@@ -65,9 +83,9 @@ add_executable(Bulkhead
   src/core/Window.cpp      src/core/Window.h
   src/render/Gpu.cpp       src/render/Gpu.h
   src/render/Renderer.cpp  src/render/Renderer.h
-  shaders/fullscreen.hlsl
-  ${FULLSCREEN_VS} ${FULLSCREEN_PS})
-set_source_files_properties(shaders/fullscreen.hlsl PROPERTIES HEADER_FILE_ONLY TRUE)
+  shaders/trace.hlsl shaders/present.hlsl
+  ${TRACE_CS} ${PRESENT_VS} ${PRESENT_PS})
+set_source_files_properties(shaders/trace.hlsl shaders/present.hlsl PROPERTIES HEADER_FILE_ONLY TRUE)
 target_include_directories(Bulkhead PRIVATE ${BULKHEAD_SHADER_GEN_DIR})
 target_link_libraries(Bulkhead PRIVATE bulkhead_lib d3d12 dxgi dxguid)
 bulkhead_settings(Bulkhead)

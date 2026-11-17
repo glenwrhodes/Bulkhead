@@ -12,9 +12,9 @@ Custom C++20 engine on DirectX 12 with DXR ray tracing (RTX 4090 Laptop GPU, ray
 | 1 | CMake skeleton: D3D12 window, offscreen render target, headless capture to PNG, ctest | **Done (round 1)** |
 | 2 | Maze generator + unit tests + overhead map PNG + A* route | **Done (round 1)** |
 | 3 | Blender kit round 1: corridor pieces, room pieces, door frame + windowed sliding door, pipes, barrels, crates, handgun, exported to .glb | **Done (round 2)**: 23 pieces in `assets/`, see `art/blender/README.md` |
-| 4 | Build the maze from the kit; G-buffer raster + DXR shadows and AO; ceiling lights | Next |
-| 5 | First-person walking with capsule collision, doors that open, gun viewmodel, scripted walk-through capture | |
-| later | Creature model, rig and animation (Blender); grid-path AI with ray-query line of sight; shooting; pickups; exit win; RT reflections; audio; HUD | |
+| 4 | Build the maze from the kit; ray-traced lighting | **Done (round 4)**: inline-RT path tracer (see Rendering) |
+| 5 | First-person walking with collision, doors that open, gun viewmodel, scripted walk-through capture | **Done (round 4)** |
+| next | Creature model, rig and animation (Blender); grid-path AI with ray-query line of sight; shooting; weapon pickups; audio; denoiser | |
 
 ## Maze generation (`src/world/Maze.*`)
 
@@ -34,11 +34,27 @@ Custom C++20 engine on DirectX 12 with DXR ray tracing (RTX 4090 Laptop GPU, ray
   - The A* route is valid and as short as the BFS distance.
   - The same seed always produces the same layout.
 
-## Rendering plan
+## Rendering (round 4)
 
-- **Round 1:** a single full-screen pass. It draws the overhead map on a glowing panel over an animated deck grid, with a marker walking the scripted route.
-- **Rounds 2–3:** raster G-buffer of the instanced kit meshes, then a DXR pass (lib_6_3) for soft shadows from ceiling area lights and RT ambient occlusion, then a temporal/spatial denoiser and tonemapping. RT reflections on metal floors after that.
-- Everything renders into an offscreen target, which is either copied to the swap chain (window) or read back to the CPU (capture). Headless capture and play use the same rendering code.
+The plan said "raster G-buffer + DXR shadows". It became a full inline ray tracer, which is
+simpler (one compute shader, no raster pipeline) and does more.
+
+- **Geometry:** every kit part has its own bottom-level acceleration structure (BLAS), built
+  once from one shared vertex/index pool. A top-level structure (TLAS) is rebuilt every
+  frame from the instance list, because doors slide and the gun follows the camera.
+  Instance masks separate the world, the gun and glass.
+- **`shaders/trace.hlsl`** (`cs_6_5`, `RayQuery`), per pixel:
+  - **Primary ray:** jittered, with back faces culled to match the Blender kit. Glass is passed through with a tint.
+  - **Direct light:** every fixture light in the 3×3 surrounding cells, found through a per-cell light grid. Each gets a shadow ray to a random point on the light, which gives soft shadows.
+  - **One diffuse bounce (GI):** lit by the hit point's direct light and emission.
+  - **One glossy reflection ray:** skipped on rough surfaces.
+  - **Clamping:** secondary radiance is clamped against fireflies.
+- **Accumulation:**
+  - Window: temporal reprojection, which checks that the reprojected pixel saw the same surface.
+  - Captures: N sub-frames averaged from a still camera.
+- **RT off:** unshadowed direct light plus flat ambient, with no bounce or reflections. Used for the comparison shots.
+- **`shaders/present.hlsl`:** exposure, AgX tone mapping (the same view transform as the Blender renders), crosshair, minimap and full map.
+- Rendering goes into an offscreen target, which is either presented or read back, so the window and captures share one path.
 
 ## Testing and filming
 

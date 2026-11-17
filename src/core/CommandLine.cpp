@@ -23,23 +23,33 @@ bool parsePair(std::string_view s, int& a, int& b) {
 
 std::string usageText() {
     return
-        "Bulkhead - sci-fi ship maze shooter (round 1: engine skeleton + maze generator)\n"
+        "Bulkhead - ray-traced sci-fi ship maze shooter\n"
         "\n"
         "  Bulkhead.exe                          play in a window\n"
-        "  Bulkhead.exe --capture <dir>          render headless and write <dir>/frame_0001.png ...\n"
+        "  Bulkhead.exe --capture <dir>          headless: walk start -> exit, write <dir>/frame_0001.png ...\n"
+        "  Bulkhead.exe --shots <dir>            headless: corridor/door/room/junction views, RT on and off\n"
+        "  Bulkhead.exe --bench <dir>            headless: play the walk in real time like the window does,\n"
+        "                                        report frame times, save sample frames\n"
         "  Bulkhead.exe --overhead <file.png>    write the top-down map of the maze (no GPU)\n"
         "\n"
         "Options:\n"
         "  --seed N          maze seed (capture/overhead default 1234, window default random)\n"
         "  --size WxH        maze size in cells (default 12x12, 6..128)\n"
-        "  --frames N        frames to capture (default 120)\n"
-        "  --fps N           capture time step (default 30)\n"
         "  --res WxH         render resolution / window size (default 1280x720)\n"
+        "  --frames N        frames to capture (default: the whole walk)\n"
+        "  --fps N           capture frame rate (default 30)\n"
+        "  --start S         start the capture S seconds into the walk\n"
+        "  --spp N           capture samples per pixel (default 8)\n"
+        "  --rt on|off       ray tracing (default on)\n"
+        "  --exposure X      exposure multiplier (default 1)\n"
+        "  --no-hud          hide crosshair and minimap\n"
+        "  --assets DIR      kit folder (default: found next to the executable or in the source tree)\n"
         "  --cell-px N       overhead map pixels per cell (default 64)\n"
         "  --debug           enable the D3D12 debug layer\n"
         "  --help            this text\n"
         "\n"
-        "Window keys: Esc quit, M toggle map, N next seed, F12 screenshot to captures/.\n";
+        "Window: WASD move, mouse look, Shift run, click to grab the mouse, Esc release (twice: quit),\n"
+        "        M map, R ray tracing on/off, H HUD, N new ship, F12 screenshot.\n";
 }
 
 std::optional<Options> parseCommandLine(int argc, char** argv, std::string& error) {
@@ -60,11 +70,18 @@ std::optional<Options> parseCommandLine(int argc, char** argv, std::string& erro
 
         if (a == "--help" || a == "-h" || a == "/?") {
             o.mode = Options::Mode::Help;
-        } else if (a == "--capture" || a == "--overhead") {
+        } else if (a == "--capture" || a == "--overhead" || a == "--shots" || a == "--bench") {
             auto v = value();
             if (!v) return std::nullopt;
-            o.mode = a == "--capture" ? Options::Mode::Capture : Options::Mode::Overhead;
+            o.mode = a == "--capture" ? Options::Mode::Capture
+                     : a == "--shots" ? Options::Mode::Shots
+                     : a == "--bench" ? Options::Mode::Bench
+                                      : Options::Mode::Overhead;
             o.output = std::filesystem::path(std::string(*v));
+        } else if (a == "--assets") {
+            auto v = value();
+            if (!v) return std::nullopt;
+            o.assets = std::filesystem::path(std::string(*v));
         } else if (a == "--seed") {
             auto v = value();
             uint64_t s = 0;
@@ -81,14 +98,30 @@ std::optional<Options> parseCommandLine(int argc, char** argv, std::string& erro
             if (!parsePair(*v, o.width, o.height) || o.width < 16 || o.height < 16 || o.width > 8192 ||
                 o.height > 8192)
                 return bad(*v);
-        } else if (a == "--frames" || a == "--fps" || a == "--cell-px") {
+        } else if (a == "--frames" || a == "--fps" || a == "--cell-px" || a == "--spp") {
             auto v = value();
             int n = 0;
             if (!v) return std::nullopt;
             if (!parseNumber(*v, n) || n <= 0) return bad(*v);
             if (a == "--frames") o.frames = n;
             else if (a == "--fps") o.fps = n;
+            else if (a == "--spp") o.spp = std::min(n, 64);
             else o.cellPx = n;
+        } else if (a == "--start" || a == "--exposure") {
+            auto v = value();
+            float f = 0;
+            if (!v) return std::nullopt;
+            if (!parseNumber(*v, f) || f < 0) return bad(*v);
+            if (a == "--start") o.start = f;
+            else o.exposure = f;
+        } else if (a == "--rt") {
+            auto v = value();
+            if (!v) return std::nullopt;
+            if (*v == "on") o.rayTracing = true;
+            else if (*v == "off") o.rayTracing = false;
+            else return bad(*v);
+        } else if (a == "--no-hud") {
+            o.hud = false;
         } else if (a == "--debug") {
             o.debugLayer = true;
         } else {

@@ -131,11 +131,24 @@ def build_gun(parent):
         y = 0.05 + k * 0.012
         small.box((-0.009, y, -0.0275), (0.009, y + 0.007, -0.022), 'Gunmetal')
 
-    # trigger guard and trigger
-    small.tube([V3(0, 0.034, -0.022), V3(0, 0.034, -0.04), V3(0, 0.026, -0.05), V3(0, -0.012, -0.052),
-                V3(0, -0.026, -0.044)], 0.0032, 'Gunmetal', seg=10)
-    small.tube([V3(0, 0.008, -0.022), V3(0, 0.0095, -0.03), V3(0, 0.006, -0.039), V3(0, 0.0, -0.043)], 0.0028,
-               'Steel', seg=10)
+    # trigger guard: a solid moulded band (not a wire), squared front for a support finger
+    guard = Builder()
+
+    def band_yz(b, pts, thick, width, mat):
+        """Chunky segments along a (y, z) path, each a box thick x width, joints rounded."""
+        for (y0, z0), (y1, z1) in zip(pts, pts[1:]):
+            dy_, dz_ = y1 - y0, z1 - z0
+            L = math.hypot(dy_, dz_)
+            rot = Matrix.Rotation(math.atan2(dz_, dy_), 3, 'X')
+            b.obox(V3(0, (y0 + y1) / 2, (z0 + z1) / 2), (width, L, thick), mat, rot=rot)
+        for y, z in pts[1:-1]:
+            b.cyl(V3(-width / 2, y, z), V3(width / 2, y, z), thick / 2, mat, seg=12)
+
+    band_yz(guard, [(0.036, -0.021), (0.036, -0.041), (0.029, -0.051), (-0.012, -0.0535), (-0.027, -0.045),
+                    (-0.031, -0.03)], 0.0058, 0.013, 'Gunmetal')
+    # trigger: a curved blade with a flat face
+    band_yz(guard, [(0.0085, -0.021), (0.0098, -0.03), (0.007, -0.0385), (0.0015, -0.0435)], 0.0042, 0.0075, 'Steel')
+    guard.obox(V3(0, 0.0095, -0.031), (0.0078, 0.002, 0.008), 'Gunmetal')
 
     # --- grip, raked back 16 degrees ---------------------------------------
     rake = math.radians(16)
@@ -177,15 +190,42 @@ def build_gun(parent):
         z = z_top + (z_bot - z_top) * t
         y = top_y1 - dy * t - 0.0025 * t - 0.0028
         small.cyl(V3(-W + 0.005, y, z), V3(W - 0.005, y, z), 0.0045, 'Polymer', seg=12)
-    # grip texture: raised ribs following the rake
+    # grip panels: a raised plate on each side, stippled, following the rake
+    def grip_y(t):
+        return (top_y0 + top_y1) / 2 - dy * t - 0.002 * t
+
     for s in (-1, 1):
-        x = s * (W - 0.0022)
-        for k in range(10):
-            t = 0.12 + k * 0.075
+        xin, xout = s * (W - 0.0026), s * (W + 0.0004)
+        x0, x1 = min(xin, xout), max(xin, xout)
+        t0, t1 = 0.1, 0.93
+        quad = []
+        for t, side in ((t0, -1), (t0, 1), (t1, 1), (t1, -1)):
             z = z_top + (z_bot - z_top) * t
-            yc = (top_y0 + top_y1) / 2 - dy * t - 0.002 * t
-            small.box((min(x, x + s * 0.0014), yc - 0.009, z - 0.0016), (max(x, x + s * 0.0014), yc + 0.009, z + 0.0016),
-                      'Rubber')
+            quad.append((grip_y(t) + side * 0.0125, z))
+        # plate as a prism across x0..x1
+        prism_yz(guard, quad, x0, x1, 'Rubber', side_mat='Rubber')
+        # stipple: rows of tiny raised studs
+        xs = s * (W + 0.0004)
+        for row in range(12):
+            t = t0 + 0.035 + row * (t1 - t0 - 0.07) / 11
+            z = z_top + (z_bot - z_top) * t
+            for col in range(5):
+                y = grip_y(t) - 0.0095 + col * 0.0047 + (0.00235 if row % 2 else 0.0)
+                if abs(y - grip_y(t)) > 0.0105:
+                    continue
+                small.box((min(xs, xs + s * 0.0009), y - 0.0011, z - 0.0011),
+                          (max(xs, xs + s * 0.0009), y + 0.0011, z + 0.0011), 'Polymer')
+        # orange index mark at the top of the panel
+        small.box((min(xs, xs + s * 0.0006), grip_y(0.05) - 0.008, z_top - 0.0045),
+                  (max(xs, xs + s * 0.0006), grip_y(0.05) + 0.008, z_top - 0.0032), 'AccentOrange')
+    # beavertail over the web of the hand
+    guard.obox(V3(0, top_y0 - 0.006, z_top + 0.002), (0.024, 0.016, 0.008), 'Gunmetal',
+               rot=Matrix.Rotation(math.radians(-18), 3, 'X'))
+    # magazine release button (left side, behind the guard)
+    guard.cyl(V3(-W + 0.001, -0.022, -0.017), V3(-W - 0.0025, -0.022, -0.017), 0.0035, 'Steel', seg=12)
+    # magazine baseplate with a finger extension
+    guard.obox(V3(0, grip_y(1.0) + 0.002, z_bot - 0.004), (0.028, 0.044, 0.006), 'Gunmetal')
+    guard.obox(V3(0, grip_y(1.0) + 0.02, z_bot - 0.0015), (0.026, 0.012, 0.009), 'Gunmetal')
     # back strap and energy cell at the base of the grip
     small.box((-0.012, top_y0 - dy - 0.009, z_bot - 0.012), (0.012, top_y1 - dy + 0.002, z_bot + 0.002), 'DarkSteel')
     glow.box((-0.0122, top_y0 - dy - 0.006, z_bot - 0.008), (0.0122, top_y1 - dy - 0.002, z_bot - 0.004), 'LightTeal')
@@ -200,6 +240,7 @@ def build_gun(parent):
 
     pc.extra_objects.append(('body', body, 0.0028))
     pc.extra_objects.append(('grip', grip_b, 0.002))
+    pc.extra_objects.append(('guard', guard, 0.0011))
     pc.extra_objects.append(('detail', small, 0.0005))
     pc.extra_objects.append(('glow', glow, 0.0))
     return pc.finish(parent)

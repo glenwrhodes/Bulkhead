@@ -64,7 +64,7 @@ bool checkImage(const fs::path& path, int w, int h, Image* out) {
 
 int main(int argc, char** argv) {
     fs::path file, dir;
-    int count = 0, width = 0, height = 0;
+    int count = 0, width = 0, height = 0, atLeast = 0;
     bool expectMotion = false;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -72,6 +72,7 @@ int main(int argc, char** argv) {
         if (a == "--file") file = next();
         else if (a == "--dir") dir = next();
         else if (a == "--count") count = std::atoi(next().c_str());
+        else if (a == "--at-least") atLeast = std::atoi(next().c_str());
         else if (a == "--width") width = std::atoi(next().c_str());
         else if (a == "--height") height = std::atoi(next().c_str());
         else if (a == "--expect-motion") expectMotion = true;
@@ -87,6 +88,15 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+    if (!dir.empty() && atLeast > 0) {
+        // count whatever frames the run produced (e.g. the whole walk)
+        count = 0;
+        while (fs::exists(dir / std::format("frame_{:04}.png", count + 1))) ++count;
+        if (count < atLeast) {
+            std::printf("FAIL: only %d frames in %s, expected at least %d\n", count, dir.string().c_str(), atLeast);
+            return 1;
+        }
+    }
     if (dir.empty() || count <= 0) {
         std::printf("usage: capture_check --file F --width W --height H | --dir D --count N --width W --height H\n");
         return 2;
