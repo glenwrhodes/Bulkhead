@@ -66,6 +66,10 @@ PALETTE = {
     'BarrelRed':    dict(c='952a20', m=0.25, r=0.42),
     'Polymer':      dict(c='212428', m=0.0, r=0.62),
     'Glass':        dict(c='2e4b5c', m=0.0, r=0.04, a=0.28),
+    # part 3: viewport glass looking out into space: nearly clear, faintly blue-green
+    # (no diffuse to speak of: dark base colour, the tint is its hue; the engine's glass
+    # shading reflects with Fresnel and transmits the rest)
+    'ViewGlass':    dict(c='1a2a2e', m=0.0, r=0.02, a=0.12),
     'LightWhite':   dict(c='ffffff', m=0.0, r=0.3, e='e4f2ff', es=14.0),
     'LightTeal':    dict(c='ffffff', m=0.0, r=0.3, e='46dcff', es=9.0),
     'LightRed':     dict(c='ffffff', m=0.0, r=0.3, e='ff2a12', es=9.0),

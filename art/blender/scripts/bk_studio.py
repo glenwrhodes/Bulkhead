@@ -140,6 +140,94 @@ def creature_lights(target=(0, 0, 0.45), key=700.0, rim=1400.0, fill=120.0):
         ob.rotation_quaternion = (t - ob.location).to_track_quat('-Z', 'Y')
 
 
+def space_world(name='BH_Space', stars=40.0, band=0.05):
+    """A world of stars (Voronoi cells, only some lit, tinted) and a faint galactic band,
+    for the window renders. The scene's world is set to it; returns the world."""
+    w = bpy.data.worlds.get(name) or bpy.data.worlds.new(name)
+    w.use_nodes = True
+    nt = w.node_tree
+    nt.nodes.clear()
+    N = nt.nodes.new
+    L = nt.links.new
+    out = N('ShaderNodeOutputWorld')
+    tc = N('ShaderNodeTexCoord')
+    # stars: the nearest Voronoi point in each direction, sharp falloff, ~1 in 5 cells lit
+    vor = N('ShaderNodeTexVoronoi')
+    vor.voronoi_dimensions = '3D'
+    vor.inputs['Scale'].default_value = 260.0
+    L(tc.outputs['Generated'], vor.inputs['Vector'])
+    dot = N('ShaderNodeMapRange')
+    dot.inputs['From Min'].default_value = 0.0
+    dot.inputs['From Max'].default_value = 0.09
+    dot.inputs['To Min'].default_value = 1.0
+    dot.inputs['To Max'].default_value = 0.0
+    L(vor.outputs['Distance'], dot.inputs['Value'])
+    sharp = N('ShaderNodeMath')
+    sharp.operation = 'POWER'
+    sharp.inputs[1].default_value = 8.0
+    L(dot.outputs['Result'], sharp.inputs[0])
+    bw = N('ShaderNodeRGBToBW')
+    L(vor.outputs['Color'], bw.inputs['Color'])
+    pick = N('ShaderNodeMapRange')  # only the brightest cells get a star, brightness varies
+    pick.inputs['From Min'].default_value = 0.62
+    pick.inputs['From Max'].default_value = 1.0
+    pick.inputs['To Min'].default_value = 0.0
+    pick.inputs['To Max'].default_value = 1.0
+    L(bw.outputs['Val'], pick.inputs['Value'])
+    sq = N('ShaderNodeMath')
+    sq.operation = 'POWER'
+    sq.inputs[1].default_value = 3.0
+    L(pick.outputs['Result'], sq.inputs[0])
+    mul = N('ShaderNodeMath')
+    mul.operation = 'MULTIPLY'
+    L(sharp.outputs['Value'], mul.inputs[0])
+    L(sq.outputs['Value'], mul.inputs[1])
+    tint = N('ShaderNodeMix')
+    tint.data_type = 'RGBA'
+    tint.inputs['Factor'].default_value = 0.75
+    L(vor.outputs['Color'], tint.inputs['A'])
+    tint.inputs['B'].default_value = (0.85, 0.9, 1.0, 1.0)
+    star_bg = N('ShaderNodeBackground')
+    L(tint.outputs['Result'], star_bg.inputs['Color'])
+    gain = N('ShaderNodeMath')
+    gain.operation = 'MULTIPLY'
+    gain.inputs[1].default_value = stars
+    L(mul.outputs['Value'], gain.inputs[0])
+    L(gain.outputs['Value'], star_bg.inputs['Strength'])
+    # galactic band: noise, strongest near one great circle
+    noise = N('ShaderNodeTexNoise')
+    noise.inputs['Scale'].default_value = 3.0
+    noise.inputs['Detail'].default_value = 8.0
+    L(tc.outputs['Generated'], noise.inputs['Vector'])
+    sep = N('ShaderNodeSeparateXYZ')
+    L(tc.outputs['Generated'], sep.inputs['Vector'])
+    near = N('ShaderNodeMapRange')
+    near.inputs['From Min'].default_value = -0.35
+    near.inputs['From Max'].default_value = 0.35
+    L(sep.outputs['Z'], near.inputs['Value'])
+    ping = N('ShaderNodeMath')
+    ping.operation = 'PINGPONG'
+    ping.inputs[1].default_value = 0.5
+    L(near.outputs['Result'], ping.inputs[0])
+    bandm = N('ShaderNodeMath')
+    bandm.operation = 'MULTIPLY'
+    L(ping.outputs['Value'], bandm.inputs[0])
+    L(noise.outputs['Fac'], bandm.inputs[1])
+    band_bg = N('ShaderNodeBackground')
+    band_bg.inputs['Color'].default_value = (0.35, 0.4, 0.75, 1.0)
+    bs = N('ShaderNodeMath')
+    bs.operation = 'MULTIPLY'
+    bs.inputs[1].default_value = band
+    L(bandm.outputs['Value'], bs.inputs[0])
+    L(bs.outputs['Value'], band_bg.inputs['Strength'])
+    add = N('ShaderNodeAddShader')
+    L(star_bg.outputs['Background'], add.inputs[0])
+    L(band_bg.outputs['Background'], add.inputs[1])
+    L(add.outputs['Shader'], out.inputs['Surface'])
+    bpy.context.scene.world = w
+    return w
+
+
 def hide_default_objects():
     for nm in ('Cube', 'Light', 'Camera'):
         ob = bpy.data.objects.get(nm)

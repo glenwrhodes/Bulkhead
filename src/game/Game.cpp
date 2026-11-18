@@ -1364,4 +1364,157 @@ void Game::stepHuntScene(float t, float dt) {
     if (playerDead() && scene_.endAt < 0.0f) scene_.endAt = t + 3.0f;
 }
 
+// ---------------------------------------------------------------------------
+// The window scene (part 3): a scripted camera and the crawl creature
+// ---------------------------------------------------------------------------
+
+bool Game::setupWindowScene() {
+    if (!creature_.valid()) return false;
+    const Maze& m = maze_;
+    auto stepTo = [](Int2 c, Vec3 d) { return Int2{c.x + int(std::lround(d.x)), c.y + int(std::lround(d.z))}; };
+    auto dirOf = [](Vec3 d) {
+        for (int k = 0; k < 4; ++k)
+            if (dot(dirVector(Dir(k)), d) > 0.9f) return Dir(k);
+        return Dir::North;
+    };
+    auto open = [&](Int2 c, Vec3 d) { return m.inBounds(c) && m.passable(c.x, c.y, dirOf(d)); };
+    float bestScore = -1.0f;
+    for (const Level::Viewport& vp : level_.viewports) {
+        const Vec3 O = dirVector(vp.out);
+        for (float sgn : {1.0f, -1.0f}) {
+            // A points to where the creature comes from (two corridor cells that way); you
+            // walk in from the other side
+            const Vec3 A = Vec3{-O.z, 0.0f, O.x} * sgn;
+            const Int2 c = vp.cell, p1 = stepTo(c, A), p2 = stepTo(p1, A), a1 = stepTo(c, -A);
+            if (!open(c, A) || !open(p1, A) || !open(c, -A)) continue;
+            if (m.kind(p1) != CellKind::Corridor || m.kind(p2) != CellKind::Corridor || m.kind(a1) == CellKind::Void)
+                continue;
+            const Mood mood = level_.sections.moodAt(c);
+            // enough light for the corridor to show in the glass, dark enough for the stars
+            float score = mood == Mood::Dim ? 3.0f : mood == Mood::Derelict ? 2.5f : mood == Mood::Dark ? 1.5f : 1.0f;
+            if (m.kind(a1) == CellKind::Corridor) score += 0.5f;  // walking in down a corridor
+            if (score > bestScore) {
+                bestScore = score;
+                window_ = WindowScene{};
+                window_.cell = c;
+                window_.C = cellCenter(c);
+                window_.A = A;
+                window_.O = O;
+                std::vector<Int2> cells{p2, p1, c, a1};
+                crawlPath_ = CrawlPath(cells);
+            }
+        }
+    }
+    if (bestScore < 0.0f) return false;
+    WindowScene& w = window_;
+    const Vec3 up{0, 1.42f, 0};
+    w.v1 = w.C + w.O * 1.5f - w.A * 0.86f + up;
+    w.v2 = w.C + w.O * 1.5f + w.A * 0.86f + up;
+    // the creature keeps to the wall opposite the windows (it shows in the glass there)
+    const float sC = crawlPath_.project(w.C);
+    const CrawlProfile& pr = crawlPath_.profile();
+    w.uWall = dot(crawlPath_.right(sC), w.O) > 0.0f ? pr.leftWallU() : pr.rightWallU();
+    // s is about a metre behind the head. Seen at an angle from where you stand, the far
+    // viewport mirrors the opposite wall 4-6 m down the corridor: it comes in along the
+    // ceiling there, climbs down onto that wall in the reflection, and stops ~2 m down
+    // the corridor, facing you
+    w.sStart = 1.6f;
+    w.sDesc = crawlPath_.project(w.C + w.A * 4.6f) - 1.0f;
+    w.sStop = crawlPath_.project(w.C + w.A * 1.9f) - 1.0f;
+    w.creatureFrom = 8.0f;  // waiting on the ceiling out of sight (you look at the near viewport)
+    w.moveFrom = 10.0f;     // and crawling as the far viewport comes round
+    w.speed = 0.9f;
+    w.length = 17.5f;
+    creatureOn_ = false;
+    hunters_.clear();
+    respawnAt_.clear();
+    huntersWanted_ = 0;
+    flashlightOn_ = true;
+    setWindowTime(0.0f);
+    return true;
+}
+
+float Game::windowU(float s) const {
+    const float ceil = crawlPath_.profile().ceilingU();
+    return ceil + (window_.uWall - ceil) * smooth01(window_.sDesc, window_.sDesc + 2.2f, s);
+}
+
+void Game::setWindowTime(float t) {
+    const WindowScene& w = window_;
+    // the creature: crawls from t = creatureFrom at constant speed for 85% of the way,
+    // then eases into a stop behind you (same speed where the ease begins)
+    const float run = std::max(0.5f, w.sStop - w.sStart);
+    const float u = std::max(0.0f, t - w.moveFrom) * w.speed / run;
+    float f = u;
+    if (u > 0.85f) {
+        const float e = std::min(1.0f, (u - 0.85f) / 0.3f);
+        f = 0.85f + 0.15f * (1.0f - (1.0f - e) * (1.0f - e));
+    }
+    const float s = w.sStart + run * f;
+    const float stopAt = w.moveFrom + 1.15f * run / w.speed;
+    creatureOn_ = t >= w.creatureFrom;
+
+    // the camera
+    const Vec3 P0 = w.C - w.A * 4.6f - w.O * 0.15f, S = w.C - w.A * 0.86f + w.O * 0.15f, S2 = S + w.O * 0.25f;
+    const float walk = smooth01(0.0f, 4.2f, t);
+    Vec3 pos = t < 4.2f ? P0 + (S - P0) * walk : S + (S2 - S) * smooth01(4.2f, 9.0f, t);
+    const float walking = t < 4.2f ? 1.0f - smooth01(3.4f, 4.2f, t) : 0.0f;
+    const float dist = length(S - P0) * walk;
+    pos.y = kEyeHeight - 0.08f + 0.02f * walking * std::sin(dist / 0.62f * kPi);
+    auto yawPitch = [&](Vec3 target, float& yaw, float& pitch) {
+        const Vec3 d = target - pos;
+        yaw = std::atan2(-d.x, -d.z);
+        pitch = std::atan2(d.y, std::sqrt(d.x * d.x + d.z * d.z));
+    };
+    auto blend = [](float a, float b, float k) {
+        float d = b - a;
+        while (d > kPi) d -= 2.0f * kPi;
+        while (d < -kPi) d += 2.0f * kPi;
+        return a + d * k;
+    };
+    float yaw = 0.0f, pitch = 0.0f, y2 = 0.0f, p2 = 0.0f;
+    const Vec3 lookOut1 = w.v1 + w.O * 3.0f + Vec3{0, 0.25f, 0} + w.A * (0.15f * std::sin(t * 0.4f));
+    // the far viewport, looked at steeply: it mirrors the opposite wall far down the
+    // corridor (where the creature comes from), and glass reflects more at that angle
+    const Vec3 lookOut2 = w.v2 + w.O * 0.4f + Vec3{0, 0.05f, 0};
+    yawPitch(pos + w.A * 6.0f + Vec3{0, -0.1f, 0}, yaw, pitch);  // down the corridor
+    yawPitch(lookOut1, y2, p2);
+    float k = smooth01(1.6f, 4.4f, t);
+    yaw = blend(yaw, y2, k), pitch += (p2 - pitch) * k;
+    yawPitch(lookOut2, y2, p2);
+    k = smooth01(9.6f, 11.8f, t);
+    yaw = blend(yaw, y2, k), pitch += (p2 - pitch) * k;
+    const float headS = s + 1.0f;
+    const float uh = windowU(headS);
+    const Vec3 head = crawlPath_.point(headS, uh) + crawlPath_.normal(headS, uh) * 0.45f;
+    yawPitch(head, y2, p2);
+    k = smooth01(13.4f, 15.2f, t);
+    yaw = blend(yaw, y2, k), pitch += (p2 - pitch) * k;
+    Camera c;
+    c.position = pos;
+    c.yaw = yaw;
+    c.pitch = pitch;
+    camera_ = c;
+    sway_ = {};
+
+    if (creatureOn_) {
+        CreaturePose p;
+        p.s = s;
+        p.uOf = [this](float ss) { return windowU(ss); };
+        p.time = t;
+        const float flutter = 0.85f + 0.15f * std::sin(t * 23.0f);
+        const float hiss = smooth01(stopAt + 0.6f, stopAt + 1.4f, t);
+        const float faced = smooth01(13.8f, 15.0f, t);
+        p.jaw = std::max(0.06f + 0.05f * std::sin(t * 1.3f), std::max(0.6f * hiss, 0.95f * faced) * flutter);
+        p.look = t > stopAt;
+        p.lookAt = pos;
+        p.glow = 0.9f + 0.5f * std::max(hiss, faced) + 0.1f * std::sin(t * 2.3f);
+        creature_.pose(crawlPath_, p);
+    }
+    time_ = t;
+    updateLighting();
+    reveal();
+    updateEffects();
+}
+
 }  // namespace bh

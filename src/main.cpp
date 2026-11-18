@@ -385,6 +385,15 @@ int runCapture(const Options& o) {
                   game.crawlDuration(), game.crawlPath().length(), game.crawlPath().project(game.camera().position),
                   toString(game.moodAtCamera()));
     }
+    const bool windowScene = o.scene == "window";
+    if (windowScene) {
+        if (!game.setupWindowScene()) {
+            log::error("Scene 'window': no viewport with two corridor cells beside it (or no creature)");
+            return 1;
+        }
+        log::info("Scene 'window': {:.1f} s, {} viewports in the ship, filmed in a {} section", game.windowSceneLength(),
+                  game.level().viewports.size(), toString(game.moodAtCamera()));
+    }
     const bool huntScene = o.scene == "hunt" || o.scene == "fight";
     if (huntScene) {
         if (!game.setupHuntScene(o.scene == "fight")) {
@@ -397,6 +406,7 @@ int runCapture(const Options& o) {
     const float sceneLength = fireScene    ? FireScene::kDuration
                               : crawlScene ? game.crawlDuration()
                               : huntScene  ? game.huntSceneLength()
+                              : windowScene ? game.windowSceneLength()
                                            : game.walkDuration();
     const int frames = o.frames > 0 ? o.frames : int(std::ceil((sceneLength - o.start) * float(o.fps)));
     log::info("Capture: {} frames at {}x{}, {} fps, {} spp, RT {}, seed {} -> {}", frames, o.width, o.height, o.fps,
@@ -420,6 +430,8 @@ int runCapture(const Options& o) {
             }
         } else if (crawlScene) {
             game.setCrawlTime(t);
+        } else if (windowScene) {
+            game.setWindowTime(t);
         } else if (huntScene) {
             game.stepHuntScene(t, dt);  // the world steps itself (doors included)
             return;
@@ -460,7 +472,7 @@ int runCapture(const Options& o) {
             }
         }
         game.buildInstances(instances, !game.playerDead() || game.deathTime() < 0.25f);
-        if (!fireScene && !crawlScene && game.reachedExit()) exitFlash = std::min(1.0f, exitFlash + dt / 1.2f);
+        if (!fireScene && !crawlScene && !windowScene && game.reachedExit()) exitFlash = std::min(1.0f, exitFlash + dt / 1.2f);
         FrameSettings s;
         s.camera = game.camera();
         s.rayTracing = o.rayTracing;
@@ -613,6 +625,8 @@ int runBench(const Options& o) {
     std::vector<double> ms, msWithCreature, aiMs;
     std::vector<double> byMood[kMoodCount];
     int maxInView = 0;
+    std::vector<DynamicLight> extraLights;
+    std::vector<int> fixtureLoop, fixtureLive;
     for (int i = 0; i < frames; ++i) {
         const float t = o.start + float(i) * dt;
         game.setWalkTime(t);
@@ -634,6 +648,35 @@ int runBench(const Options& o) {
         s.playerMapUV = mapUV(map, game.camera().position);
         s.resetHistory = i == 0;
         applyGame(s, game, o);
+        // --test-lights: N more short-lived lights in a ring 2 m round the camera, near the
+        // ceiling, like a creature's glow close by (most of the screen within their 5.5 m)
+        if (o.testLights > 0) {
+            extraLights = game.dynamicLights();
+            for (int k = 0; k < o.testLights; ++k) {
+                const float a = 2.0f * kPi * float(k) / float(o.testLights);
+                const Vec3 p = game.camera().position + Vec3{2.0f * std::cos(a), 0.45f, 2.0f * std::sin(a)};
+                extraLights.push_back({p, Vec3{1.0f, 0.42f, 0.08f} * 0.6f, 0.15f, 5.5f});
+            }
+            s.dynamicLights = &extraLights;
+        }
+        // fixture lights the shader loops over at the camera: every light in the 3x3 cells
+        {
+            const Int2 cc = game.cameraCell();
+            int n = 0, live = 0;
+            for (int dy = -1; dy <= 1; ++dy)
+                for (int dx = -1; dx <= 1; ++dx) {
+                    const int x = cc.x + dx, y = cc.y + dy;
+                    if (x < 0 || y < 0 || x >= game.level().gridW || y >= game.level().gridH) continue;
+                    const size_t c = size_t(y * game.level().gridW + x);
+                    for (uint32_t k = 0; k < game.level().cellCount[c]; ++k) {
+                        ++n;
+                        const Vec3 r = game.lightRadiance()[game.level().cellLights[game.level().cellStart[c] + k]];
+                        live += (r.x + r.y + r.z) > 1e-4f ? 1 : 0;
+                    }
+                }
+            fixtureLoop.push_back(n);
+            fixtureLive.push_back(live);
+        }
         // as the window does: short history for flicker, and for creatures moving nearby
         bool hunterNear = false;
         for (const Hunter& hh : game.hunters())
@@ -667,6 +710,19 @@ int runBench(const Options& o) {
                        o.flashlight ? "on" : "off"),
            ms);
     for (int m = 0; m < kMoodCount; ++m) report(std::format("  in {} sections", toString(Mood(m))), byMood[m]);
+    if (!fixtureLoop.empty()) {
+        double n = 0, live = 0;
+        int most = 0;
+        for (size_t i = 0; i < fixtureLoop.size(); ++i) {
+            n += fixtureLoop[i];
+            live += fixtureLive[i];
+            most = std::max(most, fixtureLive[i]);
+        }
+        log::info("  fixture lights in the 3x3 cells round the camera (what each pixel loops over): {:.1f} on average, "
+                  "{:.1f} lit (each a shadow ray where in range), at most {} lit",
+                  n / double(fixtureLoop.size()), live / double(fixtureLoop.size()), most);
+    }
+    if (o.testLights > 0) log::info("  plus {} test lights in a ring 2 m round the camera", o.testLights);
     if (creatures > 0) {
         report("  with a creature in view", msWithCreature);
         log::info("  creatures: {} loose, at most {} in view at once; creature AI and their lights (CPU) on the "

@@ -89,6 +89,13 @@ struct Level {
     std::vector<Emitter> emitters;
     std::vector<LowPipe> lowPipes;
     int brokenCeilings = 0, steamPipes = 0, debrisPiles = 0, beacons = 0;
+    // Viewports out into space (part 3): straight corridor cells on the ship's edge, with
+    // the window wall facing out (the side named by `out`).
+    struct Viewport {
+        Int2 cell;
+        Dir out = Dir::East;
+    };
+    std::vector<Viewport> viewports;
     std::vector<Int2> route;  // start -> exit
     Vec3 spawn;
     float spawnYaw = 0.0f;
@@ -97,7 +104,8 @@ struct Level {
     int propCount = 0;
 };
 
-Level buildLevel(const Maze& maze, const Kit& kit);
+// viewports = false leaves out the windows (tests use it to check that nothing else moves).
+Level buildLevel(const Maze& maze, const Kit& kit, bool viewports = true);
 
 // Ceiling height over a world position (corridor 2.85 m, room 3.4 m).
 float ceilingAt(const Maze& maze, Vec3 p);

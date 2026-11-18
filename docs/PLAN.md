@@ -22,11 +22,13 @@ Custom C++20 engine on DirectX 12 with DXR ray tracing (RTX 4090 Laptop GPU, ray
 | 10 | Round 9: hunting AI, leap, player death; four hits to kill | **Done (rounds 9-10)**: see Hunters |
 | 11 | Round 10: game loop with several creatures; full film pass | **Done (rounds 9-10)** |
 | 12 | Part 3, round 11: measure how long it takes to meet a creature; more of them, drifting toward the player and hearing footsteps; frame rate with them loose | **Done (round 11)**: see Finding the creatures |
-| 13 | Round 12: sound (mixer, window output, WAV beside every capture, ~25 sounds, credits) | Planned |
-| 14 | Round 13: the approach (crawl in on walls and ceiling, stop, hiss, crouch, leap from any surface) | Planned |
-| 15 | Round 14: the climbing film (floor, wall, ceiling, wall, floor, close up) | Planned |
-| 16 | Round 15: the motion scanner (blips on the minimap and map) | Planned |
-| 17 | Round 16: final pass (re-measure, every film with sound) | Planned |
+| 13 | Round 12: viewports into space on the ship's edge (Blender piece built in steps, stars, glass that reflects), the window film | **Done (round 12)**: see Viewports |
+| 14 | Round 13: sound (mixer, window output, WAV beside every capture, ~25 sounds, credits) | Planned |
+| 15 | Round 14: the approach (crawl in on walls and ceiling, stop, hiss, crouch, leap from any surface) | Planned |
+| 16 | Round 15: lights without a cap: sample a few lights per pixel by importance instead of shadow-testing all of them (see Viewports, "How many lights") | Proposed |
+| 17 | Round 16: the climbing film (floor, wall, ceiling, wall, floor, close up) | Planned |
+| 18 | Round 17: the motion scanner (blips on the minimap and map) | Planned |
+| 19 | Round 18: final pass (re-measure, every film with sound) | Planned |
 
 ## Maze generation (`src/world/Maze.*`)
 
@@ -280,6 +282,116 @@ Run to run, the same section varies by 0.5-1 ms on this laptop, so the cost of t
 creatures is within that. The 23 ms CPU worst case is a one-frame spike, most likely a
 creature being replaced (a new `Creature` built from the kit plus a path over the whole
 ship); that hasn't been confirmed.
+
+## Viewports (round 12)
+
+Windows on the ship's edge that look out into space, modelled in Blender and shown step by
+step for the video.
+
+**The piece** (`art/blender/scripts/bk_window.py`, `corridor_straight_window`, 50k triangles):
+- **Base:** a straight corridor. Its east wall has two rounded viewports, one either side of the
+  cell's central rib, which becomes the mullion. The cell ends keep the normal wall profile, so it
+  joins any neighbour.
+- **Each viewport:**
+  - A flat wall plate with a rounded opening (1.16 × 1.10 m, corners 0.22 m).
+  - A reveal: a 4 cm lip, then the hull's thickness splayed 8 cm toward the glass at
+    x = 1.50, open to space beyond x = 1.64.
+  - A bezel standing 45 mm proud, with 18 hex bolts.
+  - A rubber gasket and the pane, in the new `BH_ViewGlass` (dark base colour, alpha 0.12,
+    roughness 0.02: almost no diffuse, so it reads as clear).
+- **Below:** a sill with a teal light strip under it, and stencils (`VIEWPORT 7-A`/`7-B`,
+  `PRESSURE HULL - DO NOT STRIKE`) with a green pressure light.
+- **Built in stages** (`build_window(parent, upto)`): 1 the corridor, 2 the panels cut away
+  (`wall_run(omit=...)`, the trim rail capped), 3 the plate, 4 the reveals, 5 the bezels, 6 the
+  gaskets and glass, 7 the sill and stencils.
+- **Renders:** `video/blender/window/step_01..08.png` (step 8 adds `bk_studio.space_world()`,
+  procedural stars and a galactic band). `hero_window.png` and `hero_window_looking_out.png` are
+  Cycles at 1080p. `ui/blender_window_piece.png` is the Blender window with the piece selected.
+- **Two corrections along the way:**
+  - The first version's bezels cut through the thin pipe at z = 2.13 and a handrail crossed the
+    glass. The openings were lowered and shortened, and the handrail dropped.
+  - A light base colour at 10% opacity made the glass look frosted.
+
+**Placement** (`Level.cpp`):
+- **Where:** about half the straight corridor cells whose wall is on the ship's edge, turned so
+  the windows face out. Their own `Rng` stream.
+- **The dressing stream:** a window cell still takes every draw the dressing stream would have
+  (the broken-ceiling roll and its four spark phases, and any wall piece that would have gone on
+  the window wall, skipped with `skipDraws`), so every other cell is dressed exactly as before.
+- **Seed 1234:** 24 viewports. Broken ceilings 62 (was 64), debris 61 (63), beacons 26 (28),
+  steam pipes 46 (46).
+- **Checks:** `buildLevel(maze, kit, false)` builds without them. `level_tests` checks that
+  every model and emitter outside the viewport cells, phases included, is identical to that
+  build; that each viewport is on the edge; and that its glass lies beyond the wall on the
+  outward side.
+
+**Rendering** (`shaders/trace.hlsl`):
+- **Space:** a primary ray that leaves the ship sees `sky(dir)`.
+  - Stars on a cube-face grid (300 cells a face, about 5 px at 1080p). One cell in nine has a
+    star, each a soft ~1 px disc: mostly faint, 1.5% bright, tinted from orange to blue-white.
+  - A faint galactic band and a dim violet nebula.
+  - It is a pure function of direction, so captures repeat.
+- **Glass**, which also improves the door windows:
+  - A reflection ray, fully shaded (`shade()`, so the reflected corridor has its shadows and
+    lighting), weighted by Fresnel with F0 = 0.09: two faces of about 4% each. At 4% the dim
+    corridor barely showed over the stars.
+  - Highlights from every light and the flashlight at roughness 0.015. At the shader's usual
+    minimum of 0.06, the flashlight smeared into a blob about 6° wide.
+  - A faint film of its own colour (alpha).
+  - The rest transmitted, tinted by the glass's hue.
+- **Window mode:** a pixel whose ray went through glass to space stores a point 500 m along the
+  ray and a reserved id, so its history reprojects as if infinitely far and the stars don't
+  smear. The reflection on top still reprojects like the glass surface (some ghosting while
+  moving; not measured).
+
+**The window film** (`--scene window`, `film_window`, 17.5 s, seed 1234, a dim section):
+- **0-4 s:** you walk up a corridor along the edge, past a gallery of viewports.
+- **4-10 s:** you stop at one and look out at the stars, with the corridor reflected over them.
+- **10-13 s:** you turn to the next viewport, the flashlight sweeping across the glass and reveal.
+  Looked at that steeply, it mirrors the opposite wall 4-6 m down the corridor, where the
+  creature is coming in along the ceiling and down the wall.
+- **13-17.5 s:** you turn to face it, about 3 m away on the wall, hissing.
+- **Known flaw:** during that pan the creature, waiting on the ceiling far down the corridor, is
+  briefly visible directly at the right edge of the frame before it shows in the reflection.
+- **Other tests:** `window_smoke` (smoke) and `window_preview` (diag, 2 frames a second).
+  `level_tests` checks that the scene finds a viewport and that the creature comes within 1-4 m.
+
+**How many lights** (answering "why is there a light cap if it's ray traced?"):
+- **What the shader does, per pixel, at the surface the camera sees:**
+  - **Fixture lights:** it loops over every light in the 3 × 3 cells around the hit. Each one in
+    range that isn't dead gets **one shadow ray** to a random point on it (that makes the soft
+    shadows).
+  - **Short-lived lights** (sparks, muzzle, bolts, impacts, creature glow): it loops over all of
+    them, up to 32. Each within range gets another shadow ray.
+  - **Then** one bounce ray and one glossy ray. Bounce hits are lit without shadow rays.
+- **So per pixel is not free:** ray tracing costs per ray, and every light in range is one more
+  ray for every pixel it reaches. That is about 2 million rays a frame at 1080p.
+- **Measured** (`light_cost_N`, label `diag`; the same 15 s of the walk at 1080p, N extra
+  lights in a ring 2 m round the camera):
+
+| Extra lights in range | 0 | 4 | 8 | 16 | 32 |
+|---|---|---|---|---|---|
+| Median frame | 8.8 ms | 10.2 ms | 10.9 ms | 13.9 ms | 17.9 ms |
+
+  About 0.3 ms a light; 32 lights double the frame. The fixtures already add 11 lit lights on
+  average in the 3 × 3 cells round the camera (14 at most).
+- **The caps:**
+  - The renderer passes up to 32 short-lived lights, and the game keeps the 16 brightest.
+  - Round 11 kept the creatures' glow lights to the three nearest.
+  - Without a cap, ten creatures piled on the camera in the bench took the median from 7 to
+    12 ms (15 ms in dark sections).
+- **The fix** (round 15, proposed): sample lights instead of testing them all. For each pixel,
+  pick one or two lights at random in proportion to how much each could add there (unshadowed),
+  send shadow rays only to those, and divide by the chance of picking them. The temporal history
+  (window) and the sub-frames (captures) average out the extra noise.
+  - Then the cost is the same for 5 lights or 500, and the caps can go.
+  - Reusing good picks from neighbouring pixels and the last frame (ReSTIR) keeps the noise down
+    when many lights compete.
+  - Fixtures and short-lived lights can share one pick.
+
+Timing after this round (`bench_walk`, whole walk, 1080p): median 7.6 ms, 95th percentile
+10.2 ms (7.2 / 9.7 ms last round; the same section varies by 0.5-1 ms run to run on this
+laptop).
 
 ## The walking weave (fixed after round 10)
 

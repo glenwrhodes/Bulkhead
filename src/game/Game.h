@@ -132,6 +132,16 @@ public:
     float crawlU(float s) const;
     float crawlS(float t) const;  // distance along its path at scene time t
 
+    // ---- viewports (part 3) ----
+    // The window scene (capture --scene window, ~17 s): walk up a corridor to a viewport on
+    // the ship's edge and look out at the stars; the creature crawls in behind you along the
+    // ceiling and down the opposite wall, seen in the glass; pan to the other viewport, the
+    // flashlight sweeping across the glass; turn round to face it, hissing on the wall.
+    // False if no viewport has two corridor cells on one side (or the kit has no creature).
+    bool setupWindowScene();
+    float windowSceneLength() const { return window_.length; }
+    void setWindowTime(float t);
+
     // ---- hunters (rounds 9-10) ----
     // Puts `count` creatures loose in the ship, in the dim, dark and derelict sections
     // away from the player. They roam, stalk, chase, leap and kill; four hits kill one.
@@ -281,6 +291,15 @@ private:
         float duration = 0.0f;
     } crawl_;
     CreaturePose crawlPose(float t) const;
+    struct WindowScene {
+        Int2 cell;
+        Vec3 C, A, O;          // cell centre (floor), along the corridor (the creature's way), out
+        Vec3 v1, v2;           // the two viewports' centres on the glass (v1 on the -A side)
+        float sStart = 0, sDesc = 0, sStop = 0, uWall = 0;
+        float creatureFrom = 5.0f, moveFrom = 5.0f, speed = 1.05f;  // there from, crawling from
+        float length = 17.0f;
+    } window_;
+    float windowU(float s) const;
     // kit models
     int gunModel_ = -1, armsModel_ = -1, flashModel_ = -1, boltModel_ = -1, sparkModel_ = -1, scorchModel_ = -1;
     Vec3 muzzleLocal_{0, 0.022f, -0.168f};

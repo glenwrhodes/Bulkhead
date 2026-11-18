@@ -55,6 +55,10 @@ std::string usageText() {
         "  --runs SxV        encounters: S ships x V runs on each (default 10x3)\n"
         "  --minutes M       encounters: length of each run (default 10)\n"
         "  --sweep           encounters: try a grid of creature counts, drift timings and hearing\n"
+        "  --test-lights N   bench: add N small short-lived lights in a ring round the camera (what\n"
+        "                    each one costs per frame)\n"
+        "  --scene window    capture: walk up to a viewport on the ship's edge, the stars outside,\n"
+        "                    the creature crawling past behind you in the glass, turn to face it\n"
         "  --scene weave     capture: the window's movement code, forward held, down a straight\n"
         "                    corridor; logs the sideways drift (weave.csv, weave_plot.png)\n"
         "  --step-hz N       weave: game steps per second (default 100, the window's typical rate)\n"
@@ -102,7 +106,8 @@ std::optional<Options> parseCommandLine(int argc, char** argv, std::string& erro
         } else if (a == "--scene") {
             auto v = value();
             if (!v) return std::nullopt;
-            if (*v != "walk" && *v != "fire" && *v != "crawl" && *v != "hunt" && *v != "fight" && *v != "weave")
+            if (*v != "walk" && *v != "fire" && *v != "crawl" && *v != "hunt" && *v != "fight" && *v != "weave" &&
+                *v != "window")
                 return bad(*v);
             o.scene = std::string(*v);
         } else if (a == "--assets") {
@@ -180,6 +185,12 @@ std::optional<Options> parseCommandLine(int argc, char** argv, std::string& erro
             else return bad(*v);
             if (a == "--rt") o.rayTracing = on;
             else o.flashlight = on;
+        } else if (a == "--test-lights") {
+            auto v = value();
+            int n = 0;
+            if (!v) return std::nullopt;
+            if (!parseNumber(*v, n) || n < 0 || n > 32) return bad(*v);
+            o.testLights = n;
         } else if (a == "--sweep") {
             o.sweep = true;
         } else if (a == "--no-hud") {

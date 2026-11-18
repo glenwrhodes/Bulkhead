@@ -46,6 +46,9 @@ milestone status are in `docs/PLAN.md`; update that table when a milestone lands
   cull every front face and the level renders inside out.
 - World space: X east, Y up, Z south. Maze cell (x, y) is centred at (4x, 0, 4y). Kit
   pieces are rotated with `Mat4::rotationY(yawFor(dir))`; see `src/world/Level.cpp`.
+- Blender work for the video: show the steps. After each modelling step, render
+  `video/blender/<piece>/step_NN.png` framed on the piece (build the script in stages, as
+  `bk_window.build_window(upto=N)` does), then Cycles finals and a Blender window screenshot.
 - Headless modes: `--capture` (the walk as PNGs), `--shots` (RT on/off pairs at fixed
   viewpoints), `--bench` (window-mode frame times in `bench.log`), `--overhead`.
   The window itself can't be watched here: `--bench` is how window-mode quality (noise,
@@ -81,6 +84,15 @@ milestone status are in `docs/PLAN.md`; update that table when a milestone lands
   when the new path turns there, because corners are rounded. `CrawlPath::project` without
   a range can snap onto a stretch that passes nearby. Turning round on the path still snaps
   (`Hunter::uTurns`, a known issue).
+- Viewports (`corridor_straight_window`) come from their own `Rng` stream. A window cell
+  still takes every draw the dressing stream would have taken (`Builder::skipDraws`). Keep it
+  that way for anything new placed instead of a dressed piece: `level_tests` compares every
+  model and emitter outside the viewport cells against `buildLevel(..., false)`.
+- Rays that leave the ship see `sky()` in `trace.hlsl`. Pixels that reach space through glass
+  store id 16000000 and a point 500 m out, so the window reprojects them as infinitely far.
+- Each light in range is a shadow ray on every pixel it reaches (~0.3 ms a light at 1080p,
+  `ctest -L diag -R light_cost`). Lighting is not free per light, hence the caps until lights
+  are sampled instead (PLAN.md, "How many lights").
 - Window movement (`Game::update`) is not what the scripted films run. Check it with
   `--scene weave` (the window's own update at `--step-hz`) and the "walking straight" unit
   test at several frame rates. Camera-only offsets (sway, bob) must never feed back into

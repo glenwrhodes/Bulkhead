@@ -227,24 +227,39 @@ def pick_detail(rng):
 
 
 def wall_run(pc, corners, profile=WALL, wall_mats=WALL_MATS, k_low=K_CHLOW, k_wlow=K_WLOW,
-             k_wup=K_WUP, k_chup=K_CHUP, details=True, pipes=PIPES, bay_len=1.0, skip_detail=None):
-    """Sweeps a wall along a polyline and dresses every bay."""
+             k_wup=K_WUP, k_chup=K_CHUP, details=True, pipes=PIPES, bay_len=1.0, skip_detail=None, omit=None):
+    """Sweeps a wall along a polyline and dresses every bay. omit(bay, k): True drops
+    profile face k of that bay (the window piece cuts its viewports out this way)."""
+    import bmesh
     rng = pc.rng
     path = subdivide([V2(*p) for p in corners], bay_len)
     faces = pc.main.sweep(path, profile, lambda i, k: wall_mats.get(k, 'PanelWhite'))
     ms = miters(path)
     n = len(path)
+    gone = set()
+    if omit is not None:
+        for i in range(n - 1):
+            bay = Bay(path[i], path[i + 1])
+            for k in range(len(faces[i])):
+                if omit(bay, k):
+                    bmesh.ops.delete(pc.main.bm, geom=[faces[i][k]], context='FACES_ONLY')
+                    gone.add((i, k))
 
     for i in range(n - 1):
         bay = Bay(path[i], path[i + 1])
         straight = ((ms[i] - bay.n).length < 1e-6) and ((ms[i + 1] - bay.n).length < 1e-6)
         alt = (i % 2 == 0)
         bolts = pc.fine if straight else None
-        panelise(pc.main, faces[i][k_wlow], inner='PanelGrey' if alt else 'PanelDark', recess='PanelDark',
-                 frame_mat='PanelLight', bolts=bolts)
-        panelise(pc.main, faces[i][k_wup], inner='PanelWhite' if alt else 'PanelLight', bolts=bolts)
-        panelise(pc.main, faces[i][k_chup], frame=0.035, depth=0.012, plate=0.0, inner='PanelGrey')
+        if (i, k_wlow) not in gone:
+            panelise(pc.main, faces[i][k_wlow], inner='PanelGrey' if alt else 'PanelDark', recess='PanelDark',
+                     frame_mat='PanelLight', bolts=bolts)
+        if (i, k_wup) not in gone:
+            panelise(pc.main, faces[i][k_wup], inner='PanelWhite' if alt else 'PanelLight', bolts=bolts)
+        if (i, k_chup) not in gone:
+            panelise(pc.main, faces[i][k_chup], frame=0.035, depth=0.012, plate=0.0, inner='PanelGrey')
         low = faces[i][k_low]
+        if (i, k_low) in gone:
+            continue
         if straight and alt and bay.L > 0.6:
             # louvred vent in the lower chamfer
             pc.main.inset(low, 0.05, 0.0)

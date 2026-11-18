@@ -479,6 +479,56 @@ float3 shade(Hit h, float3 dir, inout uint seed)
 }
 
 // ---------------------------------------------------------------------------
+// Space (part 3): what a ray sees once it has left the ship through a viewport.
+// Stars on a cube-face grid (one jittered candidate per cell, the 3x3 cells around the
+// ray checked), each a soft disc ~0.8 px wide at 1080p, most faint, a few bright, tinted
+// from orange to blue-white; a faint galactic band and a dim violet nebula. A pure
+// function of direction, so captures repeat and the window can reproject it.
+// ---------------------------------------------------------------------------
+// (hash3, vnoise and fbm are the wear section's)
+float hashF(inout uint h) { return rnd(h); }
+
+float3 sky(float3 d)
+{
+    // cube face and face coordinates
+    float3 a = abs(d);
+    int face;
+    float2 uv;
+    if (a.x >= a.y && a.x >= a.z) { face = d.x > 0 ? 0 : 1; uv = d.yz / a.x; }
+    else if (a.y >= a.z)          { face = d.y > 0 ? 2 : 3; uv = d.xz / a.y; }
+    else                          { face = d.z > 0 ? 4 : 5; uv = d.xy / a.z; }
+    const float N = 300.0;                    // cells across a face (~5 px at 1080p)
+    float2 g = (uv * 0.5 + 0.5) * N;
+    int2 c0 = int2(floor(g));
+    float3 col = 0;
+    const float sigma = 0.2;                  // star radius in cells (~1 px)
+    [unroll] for (int k = 0; k < 9; ++k)
+    {
+        int2 c = c0 + int2(k % 3 - 1, k / 3 - 1);
+        uint h = hash3(int3(c, face));
+        if (hashF(h) > 0.11) continue;         // about one cell in nine has a star
+        float2 p = float2(c) + float2(0.15, 0.15) + 0.7 * float2(hashF(h), hashF(h));
+        float2 q = g - p;
+        float r2 = dot(q, q);
+        float m = hashF(h);
+        float b = 0.05 + 1.6 * pow(m, 8.0) + (m > 0.985 ? 22.0 : 0.0);  // magnitude: mostly faint
+        float t = hashF(h);
+        float3 tint = t < 0.15 ? float3(1.0, 0.72, 0.48) : t < 0.35 ? float3(1.0, 0.9, 0.75)
+                     : t < 0.8 ? float3(0.92, 0.95, 1.0) : float3(0.7, 0.8, 1.0);
+        col += tint * b * exp(-r2 / (2.0 * sigma * sigma));
+    }
+    // galactic band round one great circle, and a nebula off to one side
+    float3 nG = normalize(float3(0.35, 0.82, -0.45));
+    float bandW = exp(-pow(dot(d, nG) / 0.2, 2.0));
+    float dust = fbm(d * 5.0 + 3.1);
+    col += float3(0.16, 0.18, 0.3) * 0.05 * bandW * (0.4 + dust);
+    float3 nN = normalize(float3(-0.6, 0.25, 0.75));
+    float neb = smoothstep(0.75, 1.0, dot(d, nN)) * fbm(d * 7.0 + 11.0);
+    col += float3(0.32, 0.12, 0.38) * 0.07 * neb;
+    return col;
+}
+
+// ---------------------------------------------------------------------------
 // Haze: single scattering along the primary ray
 // ---------------------------------------------------------------------------
 float hgPhase(float c)
@@ -694,12 +744,14 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     float4 posId = float4(0, 0, 0, 0);
     uint firstFlags = 0;
     float firstT = 60.0;
+    bool toSpace = false;  // the ray left the ship through glass: the stars
     for (int layer = 0; layer < 3; ++layer)
     {
         Hit h = traceCulled(origin, dir, 200.0, 0xFF);
         if (!h.hit)
         {
-            radiance += throughput * options.y * 0.2;
+            radiance += throughput * (sky(dir) + options.y * 0.2);
+            toSpace = layer > 0;
             break;
         }
         if (layer == 0)
@@ -713,13 +765,31 @@ void CSMain(uint3 id : SV_DispatchThreadID)
         Surface s = surfaceAt(h);
         if (s.alpha < 1.0)
         {
-            // glass: a little reflected light and tint, then continue through
+            // glass (part 3): it mirrors what is behind you with Fresnel's weight (a
+            // fully shaded reflection ray), catches highlights from the lights and the
+            // flashlight, keeps a faint film of its own colour (alpha), and lets the rest
+            // through tinted by its hue
             float3 V = -dir;
-            float3 f0 = float3(0.04, 0.04, 0.04);
-            float3 F = fresnel(f0, abs(dot(h.N, V)));
-            float3 lit = directLight(h.P, h.N, V, s, false, true, seed);
-            radiance += throughput * (s.albedo * lit * s.alpha + F * 0.15);
-            throughput *= (1.0 - s.alpha) * lerp(float3(1, 1, 1), s.albedo * 2.0, 0.35);
+            float3 N = h.N;
+            bool rt = options.x > 0.5;
+            // a pane has two faces, ~4% each head-on: 9% for the pair
+            float3 F = fresnel(float3(0.09, 0.09, 0.09), abs(dot(N, V)));
+            if (rt)
+            {
+                float3 r = reflect(dir, N);
+                Hit rh = traceAny(h.P + N * 0.002, r, 60.0, MASK_WORLD);
+                float3 Lr = !rh.hit ? sky(r) : rh.front ? shade(rh, r, seed) : float3(0, 0, 0);
+                radiance += throughput * F * min(Lr, 24.0);
+            }
+            Surface gs = s;
+            gs.albedo = 0;  // highlights only: glass has no diffuse
+            gs.metallic = 0;
+            gs.roughness = 0.015;  // polished: the flashlight shows as a tight spot, not a blob
+            radiance += throughput * (directLight(h.P, N, V, gs, rt, true, seed) + flashLight(h.P, N, V, gs, rt, true));
+            float3 lit = directLight(h.P, N, V, s, false, false, seed);
+            radiance += throughput * s.albedo * lit * s.alpha;
+            float3 hue = s.albedo / max(max(s.albedo.r, s.albedo.g), max(s.albedo.b, 1e-3));
+            throughput *= (1.0 - F) * (1.0 - s.alpha) * lerp(float3(1, 1, 1), hue, 0.35);
             origin = h.P + dir * 0.002;
             continue;
         }
@@ -739,6 +809,9 @@ void CSMain(uint3 id : SV_DispatchThreadID)
         }
     }
     radiance = min(radiance, 64.0);  // tame fireflies
+    // seen through glass, space reprojects as if infinitely far (a point 500 m along the
+    // ray, a reserved id), so the stars don't smear when the camera moves
+    if (toSpace && !(firstFlags & FLAG_GUN)) posId = float4(camPos.xyz + dir * 500.0, 16000000.0);
 
     float mode = jitter.w;
     float4 result = float4(radiance, 1.0);

@@ -907,7 +907,45 @@
         "BH_Sinew"
       ],
       "lights": 0,
-      "bytes": 5394156
+      "bytes": 5394264
+    },
+    "corridor_straight_window": {
+      "file": "assets/corridor_straight_window.glb",
+      "category": "corridor",
+      "placement": "cell centre; open N+S like corridor_straight; two viewports in the east wall (Blender +X) looking out into space; the reveals reach x = 1.64, so only on the ship's edge, east wall outward",
+      "nodes": [
+        "corridor_straight_window_body",
+        "corridor_straight_window_detail",
+        "corridor_straight_window_decal",
+        "corridor_straight_window_pipes",
+        "corridor_straight_window_L0",
+        "corridor_straight_window_L1"
+      ],
+      "triangles": 49964,
+      "materials": [
+        "BH_AccentOrange",
+        "BH_Copper",
+        "BH_DarkSteel",
+        "BH_Gunmetal",
+        "BH_LightAmber",
+        "BH_LightGreen",
+        "BH_LightTeal",
+        "BH_LightWhite",
+        "BH_Paint",
+        "BH_PaintDark",
+        "BH_PaintYellow",
+        "BH_PanelDark",
+        "BH_PanelGrey",
+        "BH_PanelLight",
+        "BH_PanelWhite",
+        "BH_PipeBlue",
+        "BH_Recess",
+        "BH_Rubber",
+        "BH_Steel",
+        "BH_ViewGlass"
+      ],
+      "lights": 2,
+      "bytes": 1659036
     }
   }
 }

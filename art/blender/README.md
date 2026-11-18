@@ -20,6 +20,7 @@ plus `assets/kit_manifest.json`, and saves `bulkhead_kit.blend`. It takes about 
 |---|---|
 | `bk_core.py` | Materials (the `BH_*` palette), the `Builder` (sweeps with mitred corners, boxes, cylinders, tubes, lathe, insets), stencil text, `Piece` (body / detail / decal / pipes nodes plus point lights) |
 | `bk_corridor.py` | 5 corridor modules, wall profile, wall-bay details (junction box, hatch, sign, screen, cables, extinguisher), floor trough and grating, ribs, ceiling lights |
+| `bk_window.py` | `corridor_straight_window`: a straight corridor with two viewports in its east wall (plate, splayed reveal, bolted bezel, gasket, `BH_ViewGlass`, sill). `build_window(parent, upto)` builds the first `upto` of its 7 modelling stages, for showing the steps |
 | `bk_doors.py` | Door frame, sliding door (two leaves with small windows), bulkhead door, airlock door |
 | `bk_room.py` | Room floor, coffered ceiling, wall variants A and B, wall with doorway (boolean cut), corner post |
 | `bk_props.py` | Crates (3), barrels (2), O2 canister, console |
@@ -62,3 +63,12 @@ The renders are in `video/blender/`:
 - `ui/`: Blender interface screenshots.
 - `wip/`: work-in-progress renders.
 - `flythrough/`: a 96-frame eye-level walk down the test corridor.
+- `window/` (part 3): the viewport piece built step by step. `step_01..08.png` show the corridor,
+  the cut, the plate, the reveals, the bezels, the glass, the sill and the stars
+  (`bk_studio.space_world()`). `hero_window*.png` are Cycles finals, and `ui/` has a Blender
+  window screenshot. The `WINDOW_STEPS` collection in the `.blend` holds the piece as built for
+  the steps. To redo a step:
+  `bk_window.build_window(bk_core.collection('WINDOW_STEPS'), upto=N, name='step_window')`.
+
+The viewports go on the ship's edge only: their reveals reach x = 1.64, past the cell's wall
+(x = 1.2), and the engine turns the piece so that side faces out.

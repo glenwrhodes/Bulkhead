@@ -723,6 +723,86 @@ void testWalkStraight() {
                   std::format("distance walked in 2 s depends on frame rate ({:.2f} vs {:.2f} m)", along2[i], along2[0]));
 }
 
+// Part 3: viewports. On the ship's edge, the glass beyond the wall on the outward side,
+// a transparent glass part, and nothing else in the ship moved (every model and emitter
+// outside the viewport cells, including the dressing stream's spark and steam phases, is
+// the same as without them). The window scene finds one and reaches its beats.
+void testViewports() {
+    MazeParams p;
+    p.width = p.height = 40;
+    p.seed = 1234;
+    const Maze maze = Maze::generate(p);
+    const Level with = buildLevel(maze, g_kit), without = buildLevel(maze, g_kit, false);
+    const int win = g_kit.find("corridor_straight_window");
+    CHECK(win >= 0);
+    bool glass = false;
+    for (uint32_t part : g_kit.model(win).parts) glass = glass || g_kit.parts()[part].transparent;
+    CHECK(glass);
+    std::set<int> cells;
+    for (const Level::Viewport& v : with.viewports) cells.insert(v.cell.y * 40 + v.cell.x);
+    int placed = 0, outward = 0, onEdge = 0;
+    for (const PlacedModel& pm : with.placed) {
+        if (pm.model != win) continue;
+        ++placed;
+        const Int2 c{pm.cell % 40, pm.cell / 40};
+        for (const Level::Viewport& v : with.viewports) {
+            if (!(v.cell == c)) continue;
+            const Vec3 g = pm.transform.point({1.5f, 1.4f, 0.0f});  // on the glass (model space)
+            if (dot(g - cellCenter(c), dirVector(v.out)) > 1.4f) ++outward;
+            const Int2 beyond{c.x + kDx[int(v.out)], c.y + kDy[int(v.out)]};
+            if (!maze.inBounds(beyond)) ++onEdge;
+        }
+    }
+    std::printf("  seed 1234: %zu viewports (%d placed, %d facing out, %d on the edge); %d broken ceilings, %d steam "
+                "pipes, %d debris, %d beacons (without viewports: %d, %d, %d, %d)\n",
+                with.viewports.size(), placed, outward, onEdge, with.brokenCeilings, with.steamPipes, with.debrisPiles,
+                with.beacons, without.brokenCeilings, without.steamPipes, without.debrisPiles, without.beacons);
+    CHECK(with.viewports.size() >= 4 && placed == int(with.viewports.size()));
+    CHECK(outward == placed && onEdge == placed);
+    CHECK(without.viewports.empty());
+    // everything outside the viewport cells is placed exactly as before
+    auto same = [](const Mat4& a, const Mat4& b) {
+        for (int r = 0; r < 4; ++r)
+            for (int k = 0; k < 4; ++k)
+                if (std::abs(a.m[r][k] - b.m[r][k]) > 1e-6f) return false;
+        return true;
+    };
+    std::vector<const PlacedModel*> a, b;
+    for (const PlacedModel& pm : with.placed)
+        if (!cells.count(pm.cell)) a.push_back(&pm);
+    for (const PlacedModel& pm : without.placed)
+        if (!cells.count(pm.cell)) b.push_back(&pm);
+    bool identical = a.size() == b.size();
+    for (size_t i = 0; identical && i < a.size(); ++i)
+        identical = a[i]->model == b[i]->model && same(a[i]->transform, b[i]->transform);
+    CHECK_MSG(identical, std::format("models outside the viewport cells moved ({} vs {})", a.size(), b.size()));
+    std::vector<const Emitter*> ea, eb;
+    for (const Emitter& e : with.emitters)
+        if (!cells.count(e.cell)) ea.push_back(&e);
+    for (const Emitter& e : without.emitters)
+        if (!cells.count(e.cell)) eb.push_back(&e);
+    bool sameFx = ea.size() == eb.size();
+    for (size_t i = 0; sameFx && i < ea.size(); ++i)
+        sameFx = length(ea[i]->position - eb[i]->position) < 1e-5f && ea[i]->phase == eb[i]->phase;
+    CHECK_MSG(sameFx, std::format("spark/steam emitters outside the viewport cells changed ({} vs {})", ea.size(),
+                                  eb.size()));
+    // the window scene
+    Game game(g_kit, p);
+    CHECK(game.setupWindowScene());
+    float closest = 1e9f;
+    bool creatureSeen = false;
+    for (float t = 0.0f; t < game.windowSceneLength(); t += 1.0f / 30.0f) {
+        game.setWindowTime(t);
+        if (game.creatureActive()) {
+            creatureSeen = true;
+            closest = std::min(closest, length(game.creature().headPosition() - game.camera().position));
+        }
+    }
+    std::printf("  window scene: %.1f s, in a %s section; the creature comes within %.1f m\n", game.windowSceneLength(),
+                std::string(toString(game.moodAtCamera())).c_str(), closest);
+    CHECK(creatureSeen && closest > 0.8f && closest < 4.0f);
+}
+
 void testCollision() {
     Collision c;
     c.add({0, 0, 1, 1});
@@ -757,7 +837,8 @@ int main(int argc, char** argv) {
                           {"derelict pieces, crouching, effects, firing (40x40)", testDerelictAndGun},
                           {"creature: parts, crawl surface, gait, IK", testCreature},
                           {"hunters: roaming, the hunt, the fight, four hits", testHunters},
-                          {"walking straight: no weave at any frame rate", testWalkStraight}};
+                          {"walking straight: no weave at any frame rate", testWalkStraight},
+                          {"viewports: on the edge, facing out, nothing else moved; the window scene", testViewports}};
     for (const Test& t : tests) {
         const int before = g_failures;
         std::printf("[ RUN  ] %s\n", t.name);

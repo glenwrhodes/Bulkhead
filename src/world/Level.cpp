@@ -32,7 +32,35 @@ int rotateMask(int mask, int quarterTurns) {
 
 class Builder {
 public:
-    Builder(const Maze& m, const Kit& k, Level& l) : maze(m), kit(k), level(l), dress(m.params().seed, kDressStream) {}
+    Builder(const Maze& m, const Kit& k, Level& l)
+        : maze(m), kit(k), level(l), dress(m.params().seed, kDressStream), windows(m.params().seed, kWindowStream) {}
+
+    // The draws place() would have taken from the dressing stream for a model it now
+    // doesn't place (one per spark or steam marker), so later cells don't change.
+    void skipDraws(const char* name) {
+        const int idx = kit.find(name);
+        if (idx < 0) return;
+        for (const KitMarker& mk : kit.model(idx).markers)
+            if (mk.name.starts_with("spark") || mk.name.starts_with("steam")) (void)dress.unit();
+    }
+
+    // Viewports (part 3): about half the straight corridor cells whose wall lies on the
+    // ship's edge get corridor_straight_window, turned so the windows face out. Their own
+    // random stream: the maze, the moods and the dressing don't change.
+    void chooseViewports(bool enabled) {
+        windowOut.assign(size_t(maze.width() * maze.height()), -1);
+        if (!enabled || kit.find("corridor_straight_window") < 0) return;
+        for (int y = 0; y < maze.height(); ++y)
+            for (int x = 0; x < maze.width(); ++x) {
+                if (!straightCell(x, y) || lowPipeCell[size_t(y * maze.width() + x)]) continue;
+                int out = -1;
+                if (x == 0 && !maze.passable(x, y, Dir::West)) out = int(Dir::West);
+                else if (x == maze.width() - 1 && !maze.passable(x, y, Dir::East)) out = int(Dir::East);
+                else if (y == 0 && !maze.passable(x, y, Dir::North)) out = int(Dir::North);
+                else if (y == maze.height() - 1 && !maze.passable(x, y, Dir::South)) out = int(Dir::South);
+                if (out >= 0 && windows.chance(0.5f)) windowOut[size_t(y * maze.width() + x)] = out;
+            }
+    }
 
     int place(const char* name, Mat4 t, int door = -1, bool selfPowered = false) {
         int idx = kit.find(name);
@@ -111,7 +139,15 @@ public:
     }
 
     // Derelict dressing of a straight corridor cell, by mood.
-    void dressCorridor(int x, int y, Vec3 c, float yaw, Mood mood, bool lowPipe) {
+    // windowYaw >= 0: the cell has viewports on the wall that a wall piece turned by
+    // windowYaw would sit on; pieces there are skipped (their draws still taken).
+    void dressCorridor(int x, int y, Vec3 c, float yaw, Mood mood, bool lowPipe, float windowYaw = -1.0f) {
+        auto onWindowWall = [&](float pieceYaw) {
+            if (windowYaw < 0.0f) return false;
+            float d = std::fmod(pieceYaw - windowYaw, 2.0f * kPi);
+            if (d < 0.0f) d += 2.0f * kPi;
+            return d < 0.1f || d > 2.0f * kPi - 0.1f;
+        };
         if (lowPipe) {
             const Mat4 t = at(c, yaw);
             place("pipes_low", t);
@@ -128,20 +164,32 @@ public:
         const float side = dress.chance(0.5f) ? kPi : 0.0f;  // which wall
         const float other = side + kPi;
         if (dress.chance(pSteam)) {
-            const Mat4 t = at(c, yaw + side);
-            place("pipe_burst", t);
-            boxCanon(t, 0.9f, 0.0f, kWalk, 0.5f);
-            ++level.steamPipes;
+            if (onWindowWall(yaw + side)) {
+                skipDraws("pipe_burst");
+            } else {
+                const Mat4 t = at(c, yaw + side);
+                place("pipe_burst", t);
+                boxCanon(t, 0.9f, 0.0f, kWalk, 0.5f);
+                ++level.steamPipes;
+            }
         }
         if (dress.chance(pDebris)) {
-            const Mat4 t = at(c, yaw + other);
-            place("debris", t);
-            boxCanon(t, 0.5f, -0.95f, kWalk, 0.95f);
-            ++level.debrisPiles;
+            if (onWindowWall(yaw + other)) {
+                skipDraws("debris");
+            } else {
+                const Mat4 t = at(c, yaw + other);
+                place("debris", t);
+                boxCanon(t, 0.5f, -0.95f, kWalk, 0.95f);
+                ++level.debrisPiles;
+            }
         }
         if (dress.chance(pBeacon)) {
-            place("beacon", at(c, yaw + other), -1, true);
-            ++level.beacons;
+            if (onWindowWall(yaw + other)) {
+                skipDraws("beacon");
+            } else {
+                place("beacon", at(c, yaw + other), -1, true);
+                ++level.beacons;
+            }
         }
         (void)x, (void)y;
     }
@@ -173,14 +221,28 @@ public:
                         const bool lowPipe = lowPipeCell[size_t(y * maze.width() + x)] != 0;
                         float pBroken = mood == Mood::Derelict ? 0.35f : mood == Mood::Dark ? 0.1f
                                         : mood == Mood::Dim     ? 0.05f : 0.0f;
-                        if (!lowPipe && dress.chance(pBroken)) {
+                        const int out = windowOut[size_t(y * maze.width() + x)];
+                        float windowYaw = -1.0f;
+                        if (out >= 0) {
+                            // viewports: the east wall (canonical) turned to face out; the
+                            // dressing stream takes the draws it would have without them
+                            if (dress.chance(pBroken)) {
+                                if (dress.chance(0.5f)) yaw += kPi;
+                                skipDraws("corridor_straight_broken");
+                            }
+                            int kw = 0;
+                            while ((1 + 3 * kw) % 4 != out) ++kw;
+                            windowYaw = float(kw) * kPi / 2;
+                            place("corridor_straight_window", at(c, windowYaw));
+                            level.viewports.push_back({{x, y}, Dir(out)});
+                        } else if (!lowPipe && dress.chance(pBroken)) {
                             if (dress.chance(0.5f)) yaw += kPi;  // either end of the cell
                             place("corridor_straight_broken", at(c, yaw));
                             ++level.brokenCeilings;
                         } else {
                             place(p.model, at(c, yaw));
                         }
-                        dressCorridor(x, y, c, yaw, mood, lowPipe);
+                        dressCorridor(x, y, c, yaw, mood, lowPipe, windowYaw);
                     } else {
                         place(p.model, at(c, yaw));
                     }
@@ -376,6 +438,9 @@ public:
     static constexpr uint64_t kDressStream = 0xd3e1c7a5b9f2u;
     Rng dress;
     std::vector<char> lowPipeCell;
+    static constexpr uint64_t kWindowStream = 0x5ca7e2f1d04bu;
+    Rng windows;
+    std::vector<int> windowOut;  // per cell: the Dir the viewports face, -1 none
 };
 
 }  // namespace
@@ -441,7 +506,7 @@ Vec3 doorLeafOffset(const std::string& name, float open) {
     return {0, 0, 0};
 }
 
-Level buildLevel(const Maze& maze, const Kit& kit) {
+Level buildLevel(const Maze& maze, const Kit& kit, bool viewports) {
     Level level;
     Builder b(maze, kit, level);
     Rng rng(maze.params().seed * 7919u + 17u);
@@ -449,6 +514,7 @@ Level buildLevel(const Maze& maze, const Kit& kit) {
 
     level.sections = buildSections(maze);
     b.chooseLowPipes();
+    b.chooseViewports(viewports);
 
     for (int y = 0; y < maze.height(); ++y)
         for (int x = 0; x < maze.width(); ++x) {

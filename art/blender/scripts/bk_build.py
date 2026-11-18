@@ -22,7 +22,7 @@ BLEND = os.path.join(ROOT, 'art', 'blender', 'bulkhead_kit.blend')
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
-MODULES = ['bk_core', 'bk_corridor', 'bk_doors', 'bk_room', 'bk_props', 'bk_gun', 'bk_derelict', 'bk_arms',
+MODULES = ['bk_core', 'bk_corridor', 'bk_window', 'bk_doors', 'bk_room', 'bk_props', 'bk_gun', 'bk_derelict', 'bk_arms',
            'bk_creature', 'bk_layout', 'bk_studio']
 
 # How the engine uses each piece (documented in the manifest).
@@ -32,6 +32,9 @@ CATEGORY = {
     'corridor_tee': ('corridor', 'cell centre; open N+E+S'),
     'corridor_cross': ('corridor', 'cell centre; open N+E+S+W'),
     'corridor_end': ('corridor', 'cell centre; open N'),
+    'corridor_straight_window': ('corridor', 'cell centre; open N+S like corridor_straight; two viewports in the '
+                                             'east wall (Blender +X) looking out into space; the reveals reach '
+                                             'x = 1.64, so only on the ship\'s edge, east wall outward'),
     'door_frame': ('door', 'edge midpoint; passage along local Y'),
     'door_sliding': ('door', 'edge midpoint; animate LeafL along -X and LeafR along +X (0.8 m)'),
     'door_bulkhead': ('door', 'edge midpoint; animate Leaf along +Z (2.4 m)'),
@@ -89,6 +92,7 @@ def build_all(m):
     m['bk_props'].build_props(kit)
     m['bk_gun'].build_gun(kit)
     m['bk_corridor'].build_corridor('straight', kit, broken=True)
+    m['bk_window'].build_window(kit)
     m['bk_derelict'].build_derelict(kit)
     m['bk_arms'].build_all_fx(kit)
     m['bk_creature'].build_creature(kit)

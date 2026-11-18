@@ -32,6 +32,7 @@ struct Options {
     int encounterVariants = 3;
     float minutes = 10.0f;         // --encounters: each run's length
     bool sweep = false;            // --encounters: try a grid of tunings (count, drift, hearing)
+    int testLights = 0;            // --bench: add this many short-lived lights round the camera (cost test)
     int stepHz = 100;              // weave capture: game steps per second
     std::string scene = "walk";    // capture: "walk" (start -> exit), "fire" (six shots), "crawl" (the creature)
     float haze = 1.0f;             // haze density multiplier

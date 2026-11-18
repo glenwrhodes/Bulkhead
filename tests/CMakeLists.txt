@@ -85,6 +85,16 @@ bulkhead_png_test(fight_smoke smoke
   GAME  --capture "${CAP}/fight_smoke" --scene fight --res 480x270 --fps 15 --spp 2 --seed 1234
   CHECK --dir "${CAP}/fight_smoke" --at-least 100 --width 480 --height 270 --expect-motion)
 
+# Viewports (part 3): stars through the glass, the creature passing behind you in it.
+bulkhead_png_test(window_smoke smoke
+  GAME  --capture "${CAP}/window_smoke" --scene window --frames 24 --start 9 --res 640x360 --spp 2 --seed 1234
+  CHECK --dir "${CAP}/window_smoke" --count 24 --width 640 --height 360 --expect-motion)
+
+# The whole window scene at 2 frames a second, for looking it over. Label "diag".
+add_test(NAME window_preview COMMAND Bulkhead --capture "${CAP}/window_preview" --scene window --fps 2 --res 960x540
+         --spp 12 --seed 1234)
+set_tests_properties(window_preview PROPERTIES LABELS diag RUN_SERIAL TRUE)
+
 bulkhead_png_test(shots_smoke smoke
   GAME  --shots "${CAP}/shots_smoke" --res 640x360 --spp 4 --seed 1234
   CHECK --file "${CAP}/shots_smoke/shot_door_rt.png" --width 640 --height 360)
@@ -99,6 +109,14 @@ bulkhead_png_test(bench smoke
 # should converge completely. Label "diag": not part of the normal runs.
 add_test(NAME bench_static COMMAND Bulkhead --bench "${CAP}/bench_static" --res 1280x720 --frames 240 --start 1000 --seed 1234)
 set_tests_properties(bench_static PROPERTIES LABELS diag)
+
+# What each short-lived light costs: the same 15 s of the walk at 1080p with 0..32 extra
+# lights in a ring 2 m round the camera (most pixels within their range). Label "diag".
+foreach(n 0 4 8 16 32)
+  add_test(NAME light_cost_${n} COMMAND Bulkhead --bench "${CAP}/light_cost_${n}" --res 1920x1080 --start 60
+           --frames 900 --seed 1234 --test-lights ${n})
+  set_tests_properties(light_cost_${n} PROPERTIES LABELS diag RUN_SERIAL TRUE)
+endforeach()
 
 # The timing run: window-mode rendering over the whole start -> exit walk of the 40 x 40
 # ship at 1080p, with frame times for each mood in captures/bench_walk/bench.log.
@@ -177,6 +195,13 @@ bulkhead_png_test(film_hunt film
 bulkhead_png_test(film_fight film
   GAME  --capture "${CAP}/fight" --scene fight --res 1920x1080 --fps 30 --spp 16 --seed ${FILM_SEED}
   CHECK --dir "${CAP}/fight" --at-least 250 --width 1920 --height 1080 --expect-motion)
+
+# Viewports: walk up to one on the ship's edge, the stars outside, the corridor and the
+# creature (crawling in behind you) reflected in the glass, the flashlight sweeping across
+# it, then turn round to face the creature. 1080p at 30 fps, 17 s.
+bulkhead_png_test(film_window film
+  GAME  --capture "${CAP}/window" --scene window --res 1920x1080 --fps 30 --spp 16 --seed ${FILM_SEED}
+  CHECK --dir "${CAP}/window" --at-least 480 --width 1920 --height 1080 --expect-motion)
 
 # Fixed views with ray tracing on and off, for side-by-side comparison: corridor, door,
 # room, junction, one corridor in each mood (lit, dim, dark, derelict), and the derelict

@@ -44,6 +44,8 @@ the table under [Play](#play) and in `PLAY.txt` in the zip.
   flash and recoil, and they leave sparks and scorch marks where they hit. A flashlight
   sits under the barrel. The minimap shows the cells around you, but only the ones you
   have seen.
+- Corridors along the ship's edge have viewports out into space: stars, and glass that
+  reflects the corridor (and whatever is crawling behind you).
 - The exit airlock ends the run.
 
 ## Build
@@ -114,6 +116,8 @@ Captures go to `captures/` (git-ignored):
 | `captures/fire/` | Standing in a dark corridor and firing six shots (1080p, 6 s) |
 | `captures/crawl/` | The creature: along the floor, up the wall, across the ceiling overhead (1080p, 15 s, seed 42) |
 | `captures/hunt/` | A creature hunts the player down: stalks, charges, leaps; the player dies (1080p, ~10 s) |
+| `captures/window/` | A viewport on the ship's edge: stars outside, the corridor and the creature reflected in the glass, the flashlight across it, then the creature on the wall (1080p, 17.5 s) |
+| `video/blender/window/` | The viewport modelled in Blender step by step (`step_01..08.png`), Cycles finals, a Blender window screenshot |
 | `captures/fight/` | The player kills one: four hits as it charges; it dies on its back (1080p, ~11 s) |
 | `video/blender/creature/` | Blender renders of the creature: turntable, hero shot, crawl cycle |
 | `captures/walkthrough_overhead_seed1234.png` | The map of that ship, sections in colour |
