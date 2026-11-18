@@ -643,7 +643,7 @@
         "corridor_straight_broken_fx_spark2",
         "corridor_straight_broken_fx_spark3"
       ],
-      "triangles": 44084,
+      "triangles": 45800,
       "materials": [
         "BH_AccentOrange",
         "BH_CableBlack",
@@ -666,10 +666,11 @@
         "BH_PipeBlue",
         "BH_PipeRed",
         "BH_Recess",
+        "BH_Soot",
         "BH_Steel"
       ],
       "lights": 2,
-      "bytes": 1325348
+      "bytes": 1387672
     },
     "pipes_low": {
       "file": "assets/pipes_low.glb",
@@ -782,12 +783,14 @@
       "nodes": [
         "muzzle_flash_decal"
       ],
-      "triangles": 98,
+      "triangles": 134,
       "materials": [
-        "BH_LightFlash"
+        "BH_LightFlash",
+        "BH_LightFlashMid",
+        "BH_LightFlashOut"
       ],
       "lights": 0,
-      "bytes": 6844
+      "bytes": 10544
     },
     "bolt": {
       "file": "assets/bolt.glb",
@@ -830,6 +833,81 @@
       ],
       "lights": 0,
       "bytes": 1516
+    },
+    "creature": {
+      "file": "assets/creature.glb",
+      "category": "creature",
+      "placement": "rigid parts creature_<bone> in the rest pose; fx_bone_<bone> pivots, fx_foot_<leg> claw tips; forward +Y (glTF -Z), origin on the ground under the waist",
+      "nodes": [
+        "creature_pelvis",
+        "creature_waist",
+        "creature_thorax",
+        "creature_neck",
+        "creature_head",
+        "creature_jaw_t",
+        "creature_jaw_b",
+        "creature_jaw_l",
+        "creature_jaw_r",
+        "creature_tail0",
+        "creature_tail1",
+        "creature_tail2",
+        "creature_tail3",
+        "creature_tail4",
+        "creature_tail5",
+        "creature_femur_MR",
+        "creature_tibia_MR",
+        "creature_femur_HR",
+        "creature_tibia_HR",
+        "creature_femur_ML",
+        "creature_tibia_ML",
+        "creature_femur_HL",
+        "creature_tibia_HL",
+        "creature_arm_R",
+        "creature_fore_R",
+        "creature_arm_L",
+        "creature_fore_L",
+        "creature_fx_bone_pelvis",
+        "creature_fx_bone_waist",
+        "creature_fx_bone_thorax",
+        "creature_fx_bone_neck",
+        "creature_fx_bone_head",
+        "creature_fx_bone_jaw_t",
+        "creature_fx_bone_jaw_b",
+        "creature_fx_bone_jaw_l",
+        "creature_fx_bone_jaw_r",
+        "creature_fx_bone_tail0",
+        "creature_fx_bone_tail1",
+        "creature_fx_bone_tail2",
+        "creature_fx_bone_tail3",
+        "creature_fx_bone_tail4",
+        "creature_fx_bone_tail5",
+        "creature_fx_bone_femur_MR",
+        "creature_fx_bone_tibia_MR",
+        "creature_fx_foot_MR",
+        "creature_fx_bone_femur_HR",
+        "creature_fx_bone_tibia_HR",
+        "creature_fx_foot_HR",
+        "creature_fx_bone_femur_ML",
+        "creature_fx_bone_tibia_ML",
+        "creature_fx_foot_ML",
+        "creature_fx_bone_femur_HL",
+        "creature_fx_bone_tibia_HL",
+        "creature_fx_foot_HL",
+        "creature_fx_bone_arm_R",
+        "creature_fx_bone_fore_R",
+        "creature_fx_bone_arm_L",
+        "creature_fx_bone_fore_L"
+      ],
+      "triangles": 112318,
+      "materials": [
+        "BH_Bone",
+        "BH_Chitin",
+        "BH_ChitinMatte",
+        "BH_CreatureGlow",
+        "BH_Sinew"
+      ],
+      "lights": 0,
+      "bytes": 2911336
     }
   }
 }

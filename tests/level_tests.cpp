@@ -1,6 +1,7 @@
 // Unit tests for the kit loader (real assets/*.glb), level builder, collision, scripted
 // walk and game state. Usage: level_tests <assets dir>
 
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <format>
@@ -439,6 +440,78 @@ void testDerelictAndGun() {
     }
 }
 
+// Round 8: the creature. Its parts load, the crawl scene finds a corridor, the body stays
+// on the surface (floor, wall, ceiling), planted claws do not slide, and the IK keeps
+// every leg its own length.
+void testCreature() {
+    const KitModel& cm = g_kit.model(g_kit.find("creature"));
+    int bones = 0, feet = 0;
+    for (const KitMarker& mk : cm.markers) {
+        bones += mk.name.starts_with("bone_");
+        feet += mk.name.starts_with("foot_");
+    }
+    CHECK(bones == 27 && feet == 4);
+    Creature probe(g_kit);
+    CHECK(probe.valid());
+
+    // the cross-section loop: floor at u = 0, the right wall, the ceiling half way round
+    CrawlProfile pr;
+    CHECK(std::abs(pr.point(0).y) < 1e-4f && pr.normal(0).y > 0.99f);
+    CHECK(pr.point(pr.rightWallU()).x > 1.19f && pr.normal(pr.rightWallU()).x < -0.99f);
+    CHECK(std::abs(pr.point(pr.ceilingU()).y - 2.85f) < 1e-3f && pr.normal(pr.ceilingU()).y < -0.99f);
+
+    std::string moods;
+    for (uint64_t seed : {1234u, 7u, 42u, 2026u, 5u, 11u, 99u, 314u}) {
+        MazeParams p;
+        p.width = p.height = 40;
+        p.seed = seed;
+        Game game(g_kit, p);
+        const bool ok = game.setupCrawlScene();
+        CHECK_MSG(ok, std::format("seed {}: no crawl scene", seed));
+        if (!ok) continue;
+        game.setCrawlTime(0.0f);
+        moods += std::format(" {}:{}", seed, toString(game.moodAtCamera()));
+        if (seed != 1234u) continue;
+
+        // walk the scene: the body hugs the surface, planted claws stay put, legs keep length
+        const CrawlPath& path = game.crawlPath();
+        float maxLenErr = 0.0f, maxSlide = 0.0f, maxLift = 0.0f;
+        bool sawWall = false, sawCeiling = false;
+        std::array<Vec3, 4> prevFoot{};
+        std::array<bool, 4> prevPlanted{};
+        for (float t = 0.0f; t < game.crawlDuration(); t += 1.0f / 30.0f) {
+            game.setCrawlTime(t);
+            const Creature& c = game.creature();
+            for (int l = 0; l < 4; ++l) {
+                const float miss = length(c.posedClaw(l) - c.foot(l));
+                if (miss > maxLenErr && miss > 0.06f)
+                    std::printf("    miss %.3f: t %.2f leg %s planted %d s %.2f u %.2f\n", miss, t, Creature::legName(l),
+                                int(c.planted(l)), game.crawlS(t), game.crawlU(game.crawlS(t)));
+                maxLenErr = std::max(maxLenErr, miss);
+                if (c.planted(l) && prevPlanted[size_t(l)]) maxSlide = std::max(maxSlide, length(c.foot(l) - prevFoot[size_t(l)]));
+                prevFoot[size_t(l)] = c.foot(l);
+                prevPlanted[size_t(l)] = c.planted(l);
+            }
+            const float s = game.crawlS(t), u = game.crawlU(s);
+            const Vec3 n = path.normal(s, u);
+            sawWall |= std::abs(n.y) < 0.2f;
+            sawCeiling |= n.y < -0.95f;
+            // the thorax rides 0.3-0.7 m off whatever surface it is on
+            const Vec3 surf = path.point(s + 0.38f, u);
+            const float lift = dot(c.bodyCenter() - surf, path.normal(s + 0.38f, u));
+            maxLift = std::max(maxLift, std::abs(lift - 0.5f));
+        }
+        std::printf("  crawl (seed 1234): %.1f s; worst IK miss %.3f m, planted-claw slide %.3f m, body height off by "
+                    "%.2f m; wall %s, ceiling %s\n",
+                    game.crawlDuration(), maxLenErr, maxSlide, maxLift, sawWall ? "yes" : "no", sawCeiling ? "yes" : "no");
+        CHECK(sawWall && sawCeiling);
+        CHECK_MSG(maxLenErr < 0.06f, std::format("a leg cannot reach its foothold ({:.3f} m)", maxLenErr));
+        CHECK_MSG(maxSlide < 0.02f, std::format("a planted claw slides ({:.3f} m)", maxSlide));
+        CHECK(maxLift < 0.25f);
+    }
+    std::printf("  crawl scene corridor by seed:%s\n", moods.c_str());
+}
+
 void testCollision() {
     Collision c;
     c.add({0, 0, 1, 1});
@@ -470,7 +543,8 @@ int main(int argc, char** argv) {
     const Test tests[] = {{"kit", testKit}, {"collision", testCollision}, {"levels (40 seeds)", testLevels},
                           {"doors", testDoors}, {"game", testGame}, {"camera bob", testBob},
                           {"sections, lights, map, flashlight (40x40)", testMood},
-                          {"derelict pieces, crouching, effects, firing (40x40)", testDerelictAndGun}};
+                          {"derelict pieces, crouching, effects, firing (40x40)", testDerelictAndGun},
+                          {"creature: parts, crawl surface, gait, IK", testCreature}};
     for (const Test& t : tests) {
         const int before = g_failures;
         std::printf("[ RUN  ] %s\n", t.name);

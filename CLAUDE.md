@@ -64,6 +64,10 @@ milestone status are in `docs/PLAN.md`; update that table when a milestone lands
 - Effects (sparks, steam, bolts, scorch marks) are computed from time, not simulated, so
   captures are repeatable. Instance masks: world 0x01, gun/arms 0x02, glass 0x04, fx 0x08.
   Shadow and bounce rays use the world mask only.
+- The creature is rigid parts posed in `src/game/Creature.cpp` on a `CrawlPath`
+  (`src/world/CrawlSurface.*`). Its Blender rig (`CREATURE_RIG`) is for renders only;
+  the engine reads the rest pivots from the `fx_bone_*` markers. Creature render
+  lighting: `bk_studio.creature_lights()`; black glossy armour only reads by its rim light.
 - Never mirror a basis in `Mat4::basis` (X × Y must equal Z). A mirrored instance flips
   the winding, and back-face culling hides it. If a run is
   stopped, its `Bulkhead.exe` can keep running and lock the exe for the next build:

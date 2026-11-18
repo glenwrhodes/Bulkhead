@@ -65,7 +65,7 @@ Vec3 anyPerpendicular(Vec3 d) {
 }  // namespace
 
 Game::Game(const Kit& kit, const MazeParams& params)
-    : kit_(kit), maze_(Maze::generate(params)), level_(buildLevel(maze_, kit)), walk_(level_.route) {
+    : kit_(kit), maze_(Maze::generate(params)), level_(buildLevel(maze_, kit)), walk_(level_.route), creature_(kit) {
     doorOpen_.assign(level_.doors.size(), 0.0f);
     camera_.position = level_.spawn;
     camera_.yaw = level_.spawnYaw;
@@ -516,6 +516,12 @@ void Game::updateDoors(float dt) {
         Vec3 c = level_.doors[i].center;
         float dx = camera_.position.x - c.x, dz = camera_.position.z - c.z;
         bool want = dx * dx + dz * dz < kDoorTrigger * kDoorTrigger;
+        if (creatureActive()) {  // doors open for the creature too
+            for (Vec3 p : {creature_.headPosition(), creature_.bodyCenter()}) {
+                float cx = p.x - c.x, cz = p.z - c.z;
+                want = want || cx * cx + cz * cz < kDoorTrigger * kDoorTrigger;
+            }
+        }
         float step = dt / kDoorTime;
         doorOpen_[i] = std::clamp(doorOpen_[i] + (want ? step : -step), 0.0f, 1.0f);
     }
@@ -592,6 +598,7 @@ void Game::buildInstances(std::vector<SceneInstance>& out, bool withGun) const {
             Mat4 m = Mat4::basis(x * 1.8f, y * 1.8f, b.dir * -len, c);  // a fatter streak than the model
             for (uint32_t part : kit_.model(boltModel_).parts) out.push_back({part, m, kInstanceFx});
         }
+    if (creatureActive()) creature_.appendInstances(out);
     if (withGun && gunModel_ >= 0) {
         const Mat4 t = gunMatrix();
         for (uint32_t part : kit_.model(gunModel_).parts) out.push_back({part, t, kInstanceGun});
@@ -798,6 +805,211 @@ std::vector<Shot> Game::findShots() const {
         shots.push_back({"beacon", lookAt(c + along * 2.4f + Vec3{0, kEyeHeight, 0}, lamp)});
     }
     return shots;
+}
+
+// ---------------------------------------------------------------------------
+// The crawl scene
+// ---------------------------------------------------------------------------
+
+bool Game::setupCrawlScene() {
+    creatureOn_ = false;
+    if (!creature_.valid()) return false;
+    const Maze& m = maze_;
+    auto step = [](Int2 c, int d) { return Int2{c.x + kDx[d], c.y + kDy[d]}; };
+    auto straightAlong = [&](Int2 c, int d) {
+        if (!m.inBounds(c) || m.kind(c) != CellKind::Corridor) return false;
+        return m.passable(c.x, c.y, Dir(d)) && m.passable(c.x, c.y, Dir((d + 2) & 3)) &&
+               !m.passable(c.x, c.y, Dir((d + 1) & 3)) && !m.passable(c.x, c.y, Dir((d + 3) & 3));
+    };
+    // the best long straight corridor: long, and not in a pitch-dark section (the
+    // flashlight is the only light there), so the creature reads on film
+    int bestScore = -1, bestD = 0;
+    std::vector<Int2> best;
+    for (int y = 0; y < m.height(); ++y)
+        for (int x = 0; x < m.width(); ++x)
+            for (int d = 0; d < 4; ++d) {
+                Int2 c{x, y};
+                if (!straightAlong(c, d) || straightAlong(step(c, (d + 2) & 3), d)) continue;  // start of a run
+                std::vector<Int2> run;
+                while (straightAlong(c, d)) {
+                    run.push_back(c);
+                    c = step(c, d);
+                }
+                if (run.size() < 5) continue;
+                const Mood mood = level_.sections.moodAt(run[run.size() / 2]);
+                // dim corridors suit it best (some light, deep shadows), then derelict; fully
+                // lit ones flatten it, dark ones hide it
+                int score = int(std::min<size_t>(run.size(), 9)) * 2 +
+                            (mood == Mood::Dim ? 30 : mood == Mood::Derelict ? 22 : mood == Mood::Dark ? 8 : 0);
+                // no low pipes in it (the creature would crawl through them); broken ceilings,
+                // burst pipes and debris it would crawl through count against it
+                for (Int2 r : run) {
+                    for (const LowPipe& lp : level_.lowPipes)
+                        if (std::abs(lp.center.x - cellCenter(r).x) < 2.1f && std::abs(lp.center.z - cellCenter(r).z) < 2.1f)
+                            score = -1000;
+                    const int cell = r.y * m.width() + r.x;
+                    for (const PlacedModel& pm : level_.placed) {
+                        if (pm.cell != cell) continue;
+                        const std::string& nm = kit_.model(pm.model).name;
+                        if (nm == "corridor_straight_broken") score -= 14;
+                        else if (nm == "pipe_burst" || nm == "debris" || nm == "beacon") score -= 5;
+                    }
+                }
+                if (score > bestScore) {
+                    bestScore = score;
+                    best = run;
+                    bestD = d;
+                }
+            }
+    if (best.empty()) return false;
+    // the camera stands near run[0] looking along d; the creature comes from beyond the far end
+    const int d = bestD;
+    const Vec3 dv = dirVector(Dir(d));
+    const Int2 farCell = best.back();
+    const Int2 beyond = step(farCell, d);
+    // an approach from beyond the far end: prefer a room (through its door), else a few cells round a corner
+    std::vector<int> parent(size_t(m.width() * m.height()), -2);
+    std::vector<int> depth(parent.size(), 0);
+    auto idx = [&](Int2 c) { return c.y * m.width() + c.x; };
+    std::vector<char> inRun(parent.size(), 0);
+    for (Int2 r : best) inRun[size_t(idx(r))] = 1;
+    std::vector<Int2> queue{beyond};
+    parent[size_t(idx(beyond))] = -1;
+    Int2 start = beyond;
+    bool foundRoom = false;
+    for (size_t qi = 0; qi < queue.size() && !foundRoom; ++qi) {
+        const Int2 c = queue[qi];
+        if (m.kind(c) == CellKind::Room && depth[size_t(idx(c))] >= 1) {
+            start = c;
+            foundRoom = true;
+            break;
+        }
+        if (depth[size_t(idx(c))] >= 5) continue;
+        if (depth[size_t(idx(c))] >= 3 && !foundRoom && start == beyond) start = c;
+        for (int k = 0; k < 4; ++k) {
+            if (!m.passable(c.x, c.y, Dir(k))) continue;
+            const Int2 n = step(c, k);
+            if (inRun[size_t(idx(n))] || parent[size_t(idx(n))] != -2) continue;
+            parent[size_t(idx(n))] = idx(c);
+            depth[size_t(idx(n))] = depth[size_t(idx(c))] + 1;
+            queue.push_back(n);
+        }
+    }
+    std::vector<Int2> cells;
+    for (int i = idx(start); i >= 0; i = parent[size_t(i)]) cells.push_back({i % m.width(), i / m.width()});
+    // (start .. beyond), then the run from the far end to the camera's end, then behind it
+    for (auto it = best.rbegin(); it != best.rend(); ++it) cells.push_back(*it);
+    Int2 behind = best.front();
+    for (int k = 0; k < 2; ++k) {
+        if (!m.passable(behind.x, behind.y, Dir((d + 2) & 3))) break;
+        behind = step(behind, (d + 2) & 3);
+        cells.push_back(behind);
+    }
+    crawlPath_ = CrawlPath(cells);
+    crawl_ = CrawlScene{};
+    crawl_.run = best;
+    // stand about four cells from the far end, so the whole climb happens close enough to read
+    const size_t camCell = best.size() > 5 ? best.size() - 4 : 1;
+    crawl_.cameraPos = cellCenter(best[camCell]) - dv * 1.4f + Vec3{0, kEyeHeight, 0};
+    crawl_.farPoint = cellCenter(farCell) + Vec3{0, 1.2f, 0};
+    crawl_.sRunStart = crawlPath_.project(cellCenter(farCell) + dv * 2.0f);
+    crawl_.sCam = crawlPath_.project(crawl_.cameraPos);
+    // the run splits into floor, wall (with a pause) and ceiling, ending overhead
+    const float D = crawl_.sCam - crawl_.sRunStart;
+    crawl_.sWall0 = crawl_.sRunStart + 0.28f * D;
+    crawl_.sCeil0 = crawl_.sRunStart + 0.66f * D - 1.3f;
+    crawl_.sPause = 0.5f * (crawl_.sWall0 + 2.0f + crawl_.sCeil0);
+    // it starts just round the far end, so it's on screen within a second or two
+    crawl_.s0 = std::max(0.0f, crawl_.sRunStart - 1.5f);
+    // it ends with the creature right overhead, its tail sweeping past (the camera can't
+    // follow it behind without flipping)
+    crawl_.sEnd = std::min(crawlPath_.length() + 1.0f, crawl_.sCam + 0.6f);
+    // distance -> time: quick on the floor, slower climbing, a near-stop on the wall
+    // (it has noticed you), fast across the ceiling
+    float t = 0.0f;
+    for (float s = crawl_.s0; s <= crawl_.sEnd + 1e-3f; s += 0.02f) {
+        float v = 1.3f;
+        if (s > crawl_.sWall0) v = 1.0f;
+        if (s > crawl_.sWall0 + 2.0f) v = 1.3f;
+        const float dp = std::abs(s - crawl_.sPause);
+        if (dp < 0.7f) v = 0.25f + (1.3f - 0.25f) * (dp / 0.7f) * (dp / 0.7f);
+        if (s > crawl_.sCeil0) v = 1.5f;
+        if (s > crawl_.sCeil0 + 2.6f) v = 2.1f;
+        crawl_.tableS.push_back(s);
+        crawl_.tableT.push_back(t);
+        t += 0.02f / v;
+    }
+    crawl_.duration = crawl_.tableT.back() + 0.6f;
+    creatureOn_ = true;
+    return true;
+}
+
+float Game::crawlU(float s) const {
+    const CrawlProfile& pr = crawlPath_.profile();
+    const float wall = pr.rightWallU(), ceil = pr.ceilingU();
+    auto ease = [](float a, float b, float x) { return smooth01(a, b, x); };
+    float u = wall * ease(crawl_.sWall0, crawl_.sWall0 + 2.0f, s);
+    u += (ceil - wall) * ease(crawl_.sCeil0, crawl_.sCeil0 + 2.6f, s);
+    return u;
+}
+
+float Game::crawlS(float t) const {
+    const auto& T = crawl_.tableT;
+    const auto& S = crawl_.tableS;
+    if (T.empty()) return 0.0f;
+    if (t <= 0.0f) return S.front();
+    if (t >= T.back()) return S.back();
+    size_t i = size_t(std::upper_bound(T.begin(), T.end(), t) - T.begin());
+    float f = (t - T[i - 1]) / std::max(1e-6f, T[i] - T[i - 1]);
+    return S[i - 1] + (S[i] - S[i - 1]) * f;
+}
+
+CreaturePose Game::crawlPose(float t) const {
+    CreaturePose p;
+    p.s = crawlS(t);
+    p.uOf = [this](float s) { return crawlU(s); };
+    p.time = t;
+    // it hisses at you from the wall, and again right overhead
+    const float pause = 1.0f - smooth01(0.3f, 1.2f, std::abs(p.s - crawl_.sPause));
+    const float head = p.s + 1.0f;
+    const float overhead = smooth01(crawl_.sCam - 4.0f, crawl_.sCam - 1.5f, head) *
+                           (1.0f - smooth01(crawl_.sCam + 1.0f, crawl_.sCam + 2.5f, head));
+    const float flutter = 0.85f + 0.15f * std::sin(t * 23.0f);
+    p.jaw = std::max(0.55f * pause, 0.85f * overhead) * flutter;
+    p.look = pause > 0.05f || overhead > 0.05f;
+    p.lookAt = crawl_.cameraPos;
+    // it is hunting: the seams burn bright, brighter still when it stops to look
+    p.glow = 0.85f + 0.6f * std::max(pause, overhead) + 0.1f * std::sin(t * 2.3f);
+    return p;
+}
+
+void Game::setCrawlTime(float t) {
+    if (!creatureOn_) return;
+    creature_.pose(crawlPath_, crawlPose(t));
+    // the camera: stands still and follows the creature's head with a short lag; until
+    // the creature comes into the corridor it watches the far end
+    const float tl = std::max(0.0f, t - 0.15f);
+    const float sl = crawlS(tl);
+    const float sh = sl + 1.0f;  // roughly where the head is
+    const float uh = crawlU(sh);
+    Vec3 head = crawlPath_.point(sh, uh) + crawlPath_.normal(sh, uh) * 0.55f;
+    const float w = smooth01(crawl_.sRunStart - 1.0f, crawl_.sRunStart + 2.5f, sh);
+    Vec3 aim = crawl_.farPoint + (head - crawl_.farPoint) * w;
+    // once it is overhead, keep looking up rather than whipping round behind
+    const Vec3 dv = normalize(crawl_.farPoint - crawl_.cameraPos);
+    Vec3 rel = aim - crawl_.cameraPos;
+    const Vec3 flat = normalize(Vec3{dv.x, 0, dv.z});
+    float along = dot(rel, flat);
+    if (along < 0.7f) rel = rel + flat * (0.7f - along);
+    Camera c;
+    c.position = crawl_.cameraPos;
+    c.yaw = std::atan2(-rel.x, -rel.z);
+    c.pitch = std::clamp(std::atan2(rel.y, std::sqrt(rel.x * rel.x + rel.z * rel.z)), -0.4f, 1.42f);
+    camera_ = c;
+    time_ = t;
+    updateLighting();
+    reveal();
+    updateEffects();
 }
 
 }  // namespace bh

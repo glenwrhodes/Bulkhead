@@ -365,7 +365,9 @@ float3 directLight(float3 P, float3 N, float3 V, Surface s, bool shadows, bool s
             float win = saturate(1.0 - x * x * x * x);
             win *= win;
             if (win <= 0.0) continue;
-            float3 E = light.radianceRange.rgb / max(d2, 0.05) * win * NdotL;
+            // (+0.12: a surface brushing past a fixture, like the creature on the ceiling,
+            // must not blow out to white)
+            float3 E = light.radianceRange.rgb / (d2 + 0.12) * win * NdotL;
             if (shadows && occluded(P + N * 0.004, L, d - 0.02)) continue;
             sum += E * brdf(N, V, L, s, specular);
         }
@@ -419,7 +421,8 @@ float3 flashLight(float3 P, float3 N, float3 V, Surface s, bool shadows, bool sp
     win *= win;
     if (win <= 0.0) return 0;
     if (shadows && occluded(P + N * 0.004, L, d - 0.02)) return 0;
-    float3 E = kFlashColor * flashPos.w * spot * win / max(d2, 0.04) * NdotL;
+    // (+0.35: things right in front of the lens, like a hanging panel, stay readable)
+    float3 E = kFlashColor * flashPos.w * spot * win / (d2 + 0.35) * NdotL;
     return E * brdf(N, V, L, s, specular);
 }
 

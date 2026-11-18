@@ -236,12 +236,25 @@ int runCapture(const Options& o) {
 
     const float dt = 1.0f / float(o.fps);
     const bool fireScene = o.scene == "fire";
+    const bool crawlScene = o.scene == "crawl";
     FireScene fire;
     if (fireScene) {
         fire.base = sceneCamera(game, "corridor_dark");
         log::info("Scene 'fire': standing at ({:.1f}, {:.1f}), six shots", fire.base.position.x, fire.base.position.z);
     }
-    const float sceneLength = fireScene ? FireScene::kDuration : game.walkDuration();
+    if (crawlScene) {
+        if (!game.setupCrawlScene()) {
+            log::error("Scene 'crawl': no straight corridor long enough (or the kit has no creature)");
+            return 1;
+        }
+        game.setCrawlTime(0.0f);
+        log::info("Scene 'crawl': {:.1f} s, creature path {:.1f} m, camera at s = {:.1f} in a {} section",
+                  game.crawlDuration(), game.crawlPath().length(), game.crawlPath().project(game.camera().position),
+                  toString(game.moodAtCamera()));
+    }
+    const float sceneLength = fireScene    ? FireScene::kDuration
+                              : crawlScene ? game.crawlDuration()
+                                           : game.walkDuration();
     const int frames = o.frames > 0 ? o.frames : int(std::ceil((sceneLength - o.start) * float(o.fps)));
     log::info("Capture: {} frames at {}x{}, {} fps, {} spp, RT {}, seed {} -> {}", frames, o.width, o.height, o.fps,
               o.spp, o.rayTracing ? "on" : "off", seed, dir.string());
@@ -262,6 +275,8 @@ int runCapture(const Options& o) {
                 game.fire();
                 ++shotsDone;
             }
+        } else if (crawlScene) {
+            game.setCrawlTime(t);
         } else {
             game.setWalkTime(t);
         }
@@ -285,7 +300,7 @@ int runCapture(const Options& o) {
         const float t = o.start + float(i) * dt;
         stepScene(t);
         game.buildInstances(instances);
-        if (!fireScene && game.reachedExit()) exitFlash = std::min(1.0f, exitFlash + dt / 1.2f);
+        if (!fireScene && !crawlScene && game.reachedExit()) exitFlash = std::min(1.0f, exitFlash + dt / 1.2f);
         FrameSettings s;
         s.camera = game.camera();
         s.rayTracing = o.rayTracing;

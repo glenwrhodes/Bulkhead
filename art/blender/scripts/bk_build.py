@@ -23,7 +23,7 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 MODULES = ['bk_core', 'bk_corridor', 'bk_doors', 'bk_room', 'bk_props', 'bk_gun', 'bk_derelict', 'bk_arms',
-           'bk_layout', 'bk_studio']
+           'bk_creature', 'bk_layout', 'bk_studio']
 
 # How the engine uses each piece (documented in the manifest).
 CATEGORY = {
@@ -61,6 +61,8 @@ CATEGORY = {
     'bolt': ('fx', 'origin at centre, along +Y, 0.5 m'),
     'spark': ('fx', 'origin at centre, along +Y, 7 cm'),
     'scorch': ('fx', 'decal in the XY plane facing +Z'),
+    'creature': ('creature', 'rigid parts creature_<bone> in the rest pose; fx_bone_<bone> pivots, fx_foot_<leg> claw '
+                             'tips; forward +Y (glTF -Z), origin on the ground under the waist'),
 }
 
 
@@ -89,6 +91,7 @@ def build_all(m):
     m['bk_corridor'].build_corridor('straight', kit, broken=True)
     m['bk_derelict'].build_derelict(kit)
     m['bk_arms'].build_all_fx(kit)
+    m['bk_creature'].build_creature(kit)
     m['bk_layout'].test_corridor()
     return kit
 
@@ -142,6 +145,8 @@ def main(export=True, save=True):
     m['bk_studio'].hide_default_objects()
     kit = build_all(m)
     manifest = export_all(m, kit) if export else None
+    # the creature's armature and crawl cycle (Blender only; not exported)
+    m['bk_creature'].build_rig(bpy.data.collections['KIT_creature'])
     if save:
         bpy.ops.wm.save_as_mainfile(filepath=BLEND, compress=True)
     return manifest

@@ -26,6 +26,7 @@ plus `assets/kit_manifest.json`, and saves `bulkhead_kit.blend`. It takes about 
 | `bk_gun.py` | BH-9 ARC energy pistol (with the `fx_muzzle` marker) |
 | `bk_derelict.py` | Derelict dressing: `pipes_low` (crouch under), `pipe_burst` (steam), `debris`, `beacon` |
 | `bk_arms.py` | The player's arms (gloves, armour, sleeves) in gun space; `muzzle_flash`, `bolt`, `spark`, `scorch` |
+| `bk_creature.py` | The creature: 27 rigid parts with bone pivot and claw markers (`build_creature`), plus the `CREATURE_RIG` armature with IK legs and the `CR_crawl` cycle (`build_rig`, Blender only) |
 | `bk_layout.py` | Places pieces the way the engine will (test corridor, room, props) |
 | `bk_studio.py` | Eevee render setup, cameras, lights, isolating one piece |
 | `bk_build.py` | One-shot rebuild, export and manifest |

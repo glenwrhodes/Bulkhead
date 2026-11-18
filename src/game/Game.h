@@ -11,7 +11,9 @@
 
 #include "assets/Kit.h"
 #include "core/Math.h"
+#include "game/Creature.h"
 #include "game/Effects.h"
+#include "world/CrawlSurface.h"
 #include "world/Level.h"
 #include "world/Maze.h"
 #include "world/WalkPath.h"
@@ -112,6 +114,22 @@ public:
     void buildInstances(std::vector<SceneInstance>& out, bool withGun = true) const;
     std::vector<Shot> findShots() const;
 
+    // ---- the creature (round 8) ----
+    // The crawl scene (capture --scene crawl): standing near one end of a long straight
+    // corridor while the creature comes in from a room or side passage beyond the far
+    // end, crawls up the corridor on the floor, climbs the right wall, pauses to look,
+    // then crosses the ceiling overhead and passes behind. Returns false if the ship has
+    // no corridor long enough.
+    bool setupCrawlScene();
+    float crawlDuration() const { return crawl_.duration; }
+    void setCrawlTime(float t);
+    bool creatureActive() const { return creatureOn_ && creature_.valid(); }
+    const Creature& creature() const { return creature_; }
+    const CrawlPath& crawlPath() const { return crawlPath_; }
+    // Where round the corridor the scene's creature is at distance s (0 floor, ... ceiling).
+    float crawlU(float s) const;
+    float crawlS(float t) const;  // distance along its path at scene time t
+
     static constexpr float kWalkSpeed = 2.6f;    // scripted walk, m/s
     static constexpr float kCrouchWalkSpeed = 1.25f;
     static constexpr float kStartPause = 0.6f;
@@ -176,6 +194,18 @@ private:
     std::vector<SteamPlume> steam_;
     std::vector<int> nearEmitters_;
     int sparkCount_ = 0;
+    // the creature and its scene
+    Creature creature_;
+    CrawlPath crawlPath_;
+    bool creatureOn_ = false;
+    struct CrawlScene {
+        std::vector<Int2> run;           // the straight corridor, far end first
+        Vec3 cameraPos, farPoint;
+        float sRunStart = 0, sWall0 = 0, sCeil0 = 0, sPause = 0, sCam = 0, sEnd = 0, s0 = 0;
+        std::vector<float> tableS, tableT;  // distance -> time
+        float duration = 0.0f;
+    } crawl_;
+    CreaturePose crawlPose(float t) const;
     // kit models
     int gunModel_ = -1, armsModel_ = -1, flashModel_ = -1, boltModel_ = -1, sparkModel_ = -1, scorchModel_ = -1;
     Vec3 muzzleLocal_{0, 0.022f, -0.168f};

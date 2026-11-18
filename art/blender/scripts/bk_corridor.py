@@ -395,7 +395,25 @@ def broken_ceiling(pc):
     hinge = V3(-0.02, y0 + 0.02, CEIL - 0.012)
     R = _M.Rotation(math.radians(-62), 3, 'X') @ _M.Rotation(math.radians(9), 3, 'Y')
     c = hinge + R @ V3(0, 0.42, 0)
-    pc.main.obox(c, (0.58, 0.84, 0.024), 'PanelLight', rot=R, mats={'+z': 'PanelGrey'})
+    # the panel's underside (what you see) is a proper ceiling panel: framed, recessed
+    # middle, a stencil code, a soot burn and a torn corner; its back is bare grey metal
+    pf = pc.main.obox(c, (0.58, 0.84, 0.024), 'PanelGrey', rot=R, mats={'+z': 'DarkSteel'})
+    under = pf['-z']
+    pc.main.inset(under, 0.04, 0.0, inner_mat='PanelGrey')
+    pc.main.inset(under, 0.012, 0.008, rim_mat='Gunmetal', inner_mat='PanelDark')
+    n_under = R @ V3(0, 0, -1)
+    along = R @ V3(0, 1, 0)
+    across = R @ V3(1, 0, 0)
+    face_c = c + n_under * 0.0125
+    text(pc.flat, 'C-14', 0.06, frame_matrix(face_c + n_under * 0.0015 + along * 0.22, -across, along), 'PaintDark')
+    # a scorch where the fixture shorted, and rivets round the frame
+    burn = [face_c + n_under * 0.0016 + across * (0.12 * math.cos(a)) + along * (-0.12 + 0.09 * math.sin(a))
+            for a in [k * 2 * math.pi / 12 for k in range(12)]]
+    pc.flat.face(burn, 'Soot', toward=n_under)
+    for sx in (-0.25, 0.25):
+        for sy in (-0.38, 0.0, 0.38):
+            pc.fine.cyl(face_c + across * sx + along * sy, face_c + across * sx + along * sy + n_under * 0.006, 0.008,
+                        'Steel', seg=8)
     # the light fixture, torn loose, hanging at an angle on two cables
     top, bot = V3(0.36, 1.58, 2.62), V3(0.43, 0.98, 2.05)
     axis = (bot - top)

@@ -18,7 +18,7 @@ Custom C++20 engine on DirectX 12 with DXR ray tracing (RTX 4090 Laptop GPU, ray
 | 7 | Round 6: derelict Blender pieces (broken ceiling panels, hanging wires, open pipe ends, low pipes, debris, beacons), sparks, steam, crouch, the long walk film | **Done (rounds 6-7)**: see Derelict dressing and the gun |
 | 8 | Round 7: arms holding the gun, firing (muzzle flash light, bolt, impacts, recoil) | **Done (rounds 6-7)** |
 | - | Download: GitHub Actions builds every push to master and publishes `Bulkhead-windows-x64.zip` as a release | **Done** (`.github/workflows/build.yml`, `cmake/PackageZip.cmake`, `cmake/CheckPackage.cmake`) |
-| 9 | Round 8: the creature (rigid armoured plates, Blender rig and crawl cycle), crawling on floors, walls and ceilings | |
+| 9 | Round 8: the creature (rigid armoured plates, Blender rig and crawl cycle), crawling on floors, walls and ceilings | **Done (round 8)**: see The creature |
 | 10 | Round 9: hunting AI, leap, player death; four hits to kill | |
 | 11 | Round 10: game loop with several creatures; full film pass | |
 
@@ -118,6 +118,38 @@ Low pipes go in two straight cells on the walk route, about a third and two thir
 - The long walk (`film_walkthrough_a`/`_b`) ducks under both route pipes, at 71 s in a dim section and 140 s in a derelict one.
 
 Timing run after rounds 6-7: median 6.7 ms (lit 7.5, dim 7.6, derelict 5.8, dark 5.4 ms).
+
+## The creature (round 8)
+
+**The model** (`art/blender/scripts/bk_creature.py`, our own design): about 2.4 m long, low to the ground, built from rigid graphite-black armour plates on a ribbed bone frame.
+- **Head:** an eyeless, flat wedge of three overlapping crown plates with bone rims. Four petal jaws (top, bottom, left, right) are lined with needle teeth and split open in a cross, with a ring of teeth and an amber glow in the throat.
+- **Back and flanks:** a spine ridge of raked bone fins. Tendons like armoured cable conduit run along the flanks, with exposed ribs below.
+- **Limbs:** four spindly walking legs with high spiked knees and bowed, serrated lower legs ending in hooked claws. Two plated forelimbs fold under the head, ending in scythe hooks.
+- **Tail:** six segments ending in a hook.
+- **Glow:** amber seams under every plate's front edge, along the flanks and at each lower-leg joint.
+- **Mesh:** 27 rigid parts (`creature_<bone>`, 112k triangles), with `fx_bone_<bone>` pivots and `fx_foot_<leg>` claw tips.
+
+**In Blender:** `build_rig()` makes `CREATURE_RIG`, an armature with the parts parented to bones and two-bone IK legs. Each leg's pole angle was found by search so the rest pose is exact. The rig has a looping 32-frame crawl (`CR_crawl`): diagonal pairs step in turn, the body bobs, the spine and tail sway, and the jaws breathe. Renders are in `video/blender/creature/`: `turntable/` (36 frames), `hero_creature.png` and `crawl/` (32 frames).
+
+**In the engine** (`src/world/CrawlSurface.*`, `src/game/Creature.*`):
+- **Crawl surface:** the corridor's exact cross-section (`bk_corridor.py` OUTLINE) is a closed loop swept along a smoothed cell path. A point on it is (s along the path, u round the loop): u = 0 is the floor, `rightWallU` the wall, `ceilingU` the ceiling. Normals blend round the corners.
+- **Body:** u is a function of s, so the head climbs first and the body follows. Pelvis, waist, thorax, neck and head each sit on the surface at their own s, lifted by their rest height along the normal. The tail trails the pelvis and sways.
+- **Gait:** computed from distance travelled, not time, so the same distance always gives the same step. Diagonal pairs alternate with a stride of 0.55 m, and each foot is planted for 62% of the cycle. Each foothold depends only on its step number, so a planted claw never slides. It is pulled in or pushed out round the cross-section until the hip can reach it over the whole stance, which matters when the body rolls onto a wall. In the air a claw arcs out and stays within reach.
+- **IK:** two bones, with knees up and out. Each rigid part's frame maps its rest bone onto the solved one.
+- **Head:** turns toward a look target (limited), and the jaws open up to 0.6 rad.
+- **Glow and doors:** the glow multiplies the amber emissive. Doors open for the creature as well as the player.
+
+**Crawl film** (`--scene crawl`, `film_crawl`, seed 42, 15 s):
+- **Corridor choice:** the scene picks a straight corridor of at least five cells, preferring dim, then derelict sections. Runs with low pipes are rejected; broken ceilings and props count against a run.
+- **Camera:** stands about 13 m from the far end and tracks the head with a short lag. The flashlight follows its aim.
+- **Path:** the creature comes in from beyond the far end. It crawls along the floor, climbs the right wall and stops there to hiss at you, then crosses the ceiling. The film ends with it right overhead.
+- **Seed:** 42, because seed 1234's best corridor is fully lit.
+
+`level_tests` checks the parts and markers, the cross-section, and that the scene reaches both wall and ceiling. It also checks that planted claws don't slide and that every leg reaches its foothold.
+
+**Lighting fixes this round:**
+- Fixture lights fall off as I/(d² + 0.12), and the flashlight as I/(d² + 0.35). Before, a surface brushing a light (the creature on the ceiling, the hanging panel in the flashlight) blew out to white.
+- The muzzle flash now has three layers: a white-hot core, cyan inner petals and deep-blue outer petals.
 
 ## Rendering (round 4)
 

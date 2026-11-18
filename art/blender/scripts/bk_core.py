@@ -82,7 +82,15 @@ PALETTE = {
     'SuitPlate':    dict(c='8a8e86', m=0.15, r=0.48),
     'LightSpark':   dict(c='ffffff', m=0.0, r=0.3, e='ffb35a', es=60.0),
     'LightBolt':    dict(c='ffffff', m=0.0, r=0.3, e='86ecff', es=70.0),
-    'LightFlash':   dict(c='ffffff', m=0.0, r=0.3, e='c8f6ff', es=90.0),
+    'LightFlash':   dict(c='ffffff', m=0.0, r=0.3, e='e2f8ff', es=30.0),   # muzzle flash: hot core
+    'LightFlashMid': dict(c='ffffff', m=0.0, r=0.3, e='4fd2ff', es=9.0),   # inner petals, cyan
+    'LightFlashOut': dict(c='ffffff', m=0.0, r=0.3, e='1a7bff', es=3.5),   # outer petals, deep blue
+    # round 8: the creature
+    'Chitin':       dict(c='15171a', m=0.25, r=0.24),    # wet graphite black
+    'ChitinMatte':  dict(c='1d1f1f', m=0.1, r=0.5),
+    'Bone':         dict(c='6e6352', m=0.0, r=0.38),     # ridges, teeth, claws: aged dark ivory
+    'Sinew':        dict(c='2a1512', m=0.05, r=0.32),    # tendons, gums: dark, wet
+    'CreatureGlow': dict(c='ffffff', m=0.0, r=0.3, e='ff8a1e', es=9.0),  # amber seams and throat
 }
 
 

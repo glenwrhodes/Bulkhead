@@ -58,6 +58,11 @@ bulkhead_png_test(fire_smoke smoke
   GAME  --capture "${CAP}/fire_smoke" --scene fire --frames 24 --start 0.95 --res 640x360 --spp 2 --seed 1234
   CHECK --dir "${CAP}/fire_smoke" --count 24 --width 640 --height 360)
 
+# The creature: up the corridor on the floor, onto the wall, over the ceiling.
+bulkhead_png_test(crawl_smoke smoke
+  GAME  --capture "${CAP}/crawl_smoke" --scene crawl --frames 24 --start 6 --res 640x360 --spp 2 --seed 42
+  CHECK --dir "${CAP}/crawl_smoke" --count 24 --width 640 --height 360 --expect-motion)
+
 bulkhead_png_test(shots_smoke smoke
   GAME  --shots "${CAP}/shots_smoke" --res 640x360 --spp 4 --seed 1234
   CHECK --file "${CAP}/shots_smoke/shot_door_rt.png" --width 640 --height 360)
@@ -110,6 +115,13 @@ bulkhead_png_test(film_overhead_walk film
 bulkhead_png_test(film_fire film
   GAME  --capture "${CAP}/fire" --scene fire --res 1920x1080 --fps 30 --spp 16 --seed ${FILM_SEED}
   CHECK --dir "${CAP}/fire" --count 180 --width 1920 --height 1080 --expect-motion)
+
+# The creature comes in from beyond the far end of a long corridor, crawls toward you on
+# the floor, climbs the wall, stops to look at you, and crosses the ceiling overhead.
+# Seed 42: its best corridor for this is in a dim section (seed 1234's is fully lit).
+bulkhead_png_test(film_crawl film
+  GAME  --capture "${CAP}/crawl" --scene crawl --res 1920x1080 --fps 30 --spp 16 --seed 42
+  CHECK --dir "${CAP}/crawl" --at-least 300 --width 1920 --height 1080 --expect-motion)
 
 # Fixed views with ray tracing on and off, for side-by-side comparison: corridor, door,
 # room, junction, one corridor in each mood (lit, dim, dark, derelict), and the derelict

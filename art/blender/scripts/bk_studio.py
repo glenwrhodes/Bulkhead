@@ -118,6 +118,28 @@ def studio_light(on=True, energy=400.0):
     rim.rotation_euler = (math.radians(-45), 0, math.radians(-135))
 
 
+def creature_lights(target=(0, 0, 0.45), key=700.0, rim=1400.0, fill=120.0):
+    """Key, a strong rim and a cool fill: glossy black armour only reads by its highlights."""
+    t = Vector(target)
+    specs = (('BH_Key', key, 1.6, (1.0, 0.95, 0.88), Vector((2.2, 2.6, 2.4))),
+             ('BH_Rim', rim, 1.2, (0.75, 0.88, 1.0), Vector((-2.6, -2.4, 1.6))),
+             ('BH_Fill', fill, 3.0, (0.6, 0.75, 1.0), Vector((-2.5, 2.2, 0.4))))
+    for nm, energy, size, col, off in specs:
+        ob = bpy.data.objects.get(nm)
+        if ob is None:
+            ld = bpy.data.lights.new(nm, 'AREA')
+            ob = bpy.data.objects.new(nm, ld)
+            bpy.context.scene.collection.objects.link(ob)
+        ob.hide_render = False
+        ob.hide_viewport = False
+        ob.data.energy = energy
+        ob.data.size = size
+        ob.data.color = col
+        ob.location = t + off
+        ob.rotation_mode = 'QUATERNION'
+        ob.rotation_quaternion = (t - ob.location).to_track_quat('-Z', 'Y')
+
+
 def hide_default_objects():
     for nm in ('Cube', 'Light', 'Camera'):
         ob = bpy.data.objects.get(nm)

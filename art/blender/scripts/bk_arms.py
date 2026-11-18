@@ -120,17 +120,33 @@ def build_arms(parent):
 
 
 def build_muzzle_flash(parent):
+    """Three layers so it keeps its colour: a small white-hot core, cyan inner petals, and
+    long deep-blue outer petals (dim enough not to clip to white), plus a side burst."""
     pc = Piece('muzzle_flash')
     o = V3(0, 0.168, 0.022)
-    for k in range(3):
-        a = k * math.pi / 3
-        side = V3(math.cos(a), 0, math.sin(a))
-        pts = [o + side * 0.004, o + side * 0.03 + V3(0, 0.04, 0), o + V3(0, 0.12, 0), o - side * 0.03 + V3(0, 0.04, 0),
-               o - side * 0.004]
-        nrm = side.cross(V3(0, 1, 0))
-        pc.flat.face(pts, 'LightFlash', toward=nrm)
-        pc.flat.face(pts, 'LightFlash', toward=-nrm)
-    sphere(pc.flat, o + V3(0, 0.012, 0), 0.016, 'LightFlash', seg=10, rings=5)
+
+    def petals(n, length, width, mat, twist, inset=0.0):
+        for k in range(n):
+            a = twist + k * math.pi / n
+            side = V3(math.cos(a), 0, math.sin(a))
+            base = o + V3(0, inset, 0)
+            pts = [base + side * 0.003, base + side * width + V3(0, length * 0.3, 0), base + V3(0, length, 0),
+                   base - side * width + V3(0, length * 0.3, 0), base - side * 0.003]
+            nrm = side.cross(V3(0, 1, 0))
+            pc.flat.face(pts, mat, toward=nrm)
+            pc.flat.face(pts, mat, toward=-nrm)
+
+    petals(4, 0.16, 0.04, 'LightFlashOut', 0.4)
+    petals(3, 0.09, 0.024, 'LightFlashMid', 0.0, inset=0.002)
+    # a ring of short spikes out of the emitter, sideways
+    for k in range(6):
+        a = k * math.pi / 3 + 0.2
+        d = V3(math.cos(a), 0.35, math.sin(a)).normalized()
+        side = V3(-math.sin(a), 0, math.cos(a)) * 0.006
+        tip = o + d * 0.055
+        pc.flat.face([o - side, o + side, tip], 'LightFlashMid', toward=V3(0, -1, 0))
+        pc.flat.face([o - side, o + side, tip], 'LightFlashMid', toward=V3(0, 1, 0))
+    sphere(pc.flat, o + V3(0, 0.01, 0), 0.011, 'LightFlash', seg=10, rings=5)
     return pc.finish(parent)
 
 

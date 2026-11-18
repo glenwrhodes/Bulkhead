@@ -44,7 +44,8 @@ std::string usageText() {
         "  --rt on|off       ray tracing (default on)\n"
         "  --exposure X      exposure multiplier (default 1)\n"
         "  --flashlight on|off  the flashlight under the gun (default on)\n"
-        "  --scene walk|fire    capture: the walk start -> exit (default), or standing and firing six shots\n"
+        "  --scene walk|fire|crawl  capture: the walk start -> exit (default), standing and firing six\n"
+        "                    shots, or the creature crawling up a corridor, onto the wall and over you\n"
         "  --haze X          haze density multiplier (default 1, 0 = none)\n"
         "  --no-hud          hide crosshair and minimap\n"
         "  --assets DIR      kit folder (default: found next to the executable or in the source tree)\n"
@@ -88,7 +89,7 @@ std::optional<Options> parseCommandLine(int argc, char** argv, std::string& erro
         } else if (a == "--scene") {
             auto v = value();
             if (!v) return std::nullopt;
-            if (*v != "walk" && *v != "fire") return bad(*v);
+            if (*v != "walk" && *v != "fire" && *v != "crawl") return bad(*v);
             o.scene = std::string(*v);
         } else if (a == "--assets") {
             auto v = value();

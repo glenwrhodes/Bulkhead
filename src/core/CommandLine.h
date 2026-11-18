@@ -26,7 +26,7 @@ struct Options {
     bool rayTracing = true;
     bool hud = true;
     bool flashlight = true;
-    std::string scene = "walk";    // capture: "walk" (start -> exit) or "fire" (standing, six shots)
+    std::string scene = "walk";    // capture: "walk" (start -> exit), "fire" (six shots), "crawl" (the creature)
     float haze = 1.0f;             // haze density multiplier
     float exposure = 1.0f;
     bool debugLayer = false;
