@@ -49,6 +49,9 @@ public:
     Vec3 normal(float s, float u) const;  // away from the surface, into the corridor
     // Closest s on the path to a world point (horizontal distance).
     float project(Vec3 p) const;
+    // The same, searching only s in [from, to] (a path that passes near itself must not
+    // snap a point onto the wrong stretch).
+    float project(Vec3 p, float from, float to) const;
 
 private:
     WalkPath path_;

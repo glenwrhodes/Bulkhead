@@ -91,6 +91,21 @@ Vec3 CrawlPath::normal(float s, float u) const {
     return normalize(r * n.x + Vec3{0, n.y, 0});
 }
 
+float CrawlPath::project(Vec3 p, float from, float to) const {
+    from = std::max(0.0f, from);
+    to = std::min(length(), to);
+    float best = from, bestD = 1e30f;
+    for (float s = from; s <= to + 1e-4f; s += 0.05f) {
+        Vec2 c = path_.at(s);
+        float d = (c.x - p.x) * (c.x - p.x) + (c.y - p.z) * (c.y - p.z);
+        if (d < bestD) {
+            bestD = d;
+            best = s;
+        }
+    }
+    return best;
+}
+
 float CrawlPath::project(Vec3 p) const {
     float best = 0.0f, bestD = 1e30f;
     for (float s = 0.0f; s <= length(); s += 0.1f) {

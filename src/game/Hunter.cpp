@@ -34,6 +34,10 @@ bool straightCell(const Maze& m, Int2 c) {
     return (n && s && !e && !w) || (e && w && !n && !s);
 }
 
+// A corridor closet: the only way out is back. Reaching one means turning round, which the
+// crawl can't do smoothly yet (the body snaps round), so round 11's goals avoid them.
+bool deadEnd(const Maze& m, Int2 c) { return m.kind(c) == CellKind::Corridor && m.passableCount(c.x, c.y) <= 1; }
+
 }  // namespace
 
 Hunter::Hunter(const Kit& kit, uint64_t seed) : creature_(kit), rng_(seed, 0x4a17e5u) {}
@@ -66,6 +70,23 @@ float Hunter::uOf(float s) const {
 
 float Hunter::surfaceU() const { return uOf(s_); }
 
+int Hunter::surfaceKind() const {
+    if (state_ == HunterState::Leap) return 3;
+    if (!alive() || state_ == HunterState::Feed) return -1;
+    const CrawlProfile& pr = path_.profile();
+    const float total = pr.length();
+    float u = std::fmod(surfaceU(), total);
+    if (u < 0.0f) u += total;
+    auto near = [&](float a) {
+        float d = std::abs(u - a);
+        return std::min(d, total - d);
+    };
+    const float floorD = near(0.0f), ceilD = near(pr.ceilingU());
+    const float wallD = std::min(near(pr.rightWallU()), near(pr.leftWallU()));
+    if (floorD <= wallD && floorD <= ceilD) return 0;
+    return ceilD <= wallD ? 2 : 1;
+}
+
 bool Hunter::route(const Maze& maze, Int2 goal, bool allowReverse) {
     // where it is now on the old path
     size_t i = 0;
@@ -88,6 +109,7 @@ bool Hunter::route(const Maze& maze, Int2 goal, bool allowReverse) {
         const size_t from = i >= 2 ? i - 2 : 0;
         bool reverse = i >= 1 && cells_[i - 1] == p[1];
         if (reverse && !allowReverse) return false;
+        if (reverse) ++uTurns_;  // (the body snaps round: see uTurns())
         if (!reverse)
             for (size_t k = from; k < i; ++k) {
                 cells.push_back(cells_[k]);
@@ -133,19 +155,106 @@ bool Hunter::route(const Maze& maze, Int2 goal, bool allowReverse) {
     return true;
 }
 
-void Hunter::chooseRoamGoal(const Maze& maze, const Level& level) {
+bool Hunter::routeAhead(const Maze& maze, Int2 goal) {
+    if (cellS_.empty()) return route(maze, goal, false);
+    size_t i = 0;
+    float best = 1e9f;
+    for (size_t k = 0; k < cellS_.size(); ++k)
+        if (std::abs(cellS_[k] - s_) < best) {
+            best = std::abs(cellS_[k] - s_);
+            i = k;
+        }
+    if (i + 1 >= cells_.size()) {  // at the end of its path
+        lastRoute_ = "ahead, at the end of its path";
+        return route(maze, goal, false);
+    }
+    const size_t a = i + 1;  // the anchor: the next cell, kept with its surface
+    const std::vector<Int2> p = maze.findPath(cells_[a], goal);
+    if (p.size() < 2 || p[1] == cells_[i]) return false;  // behind it
+    const size_t from = i >= 2 ? i - 2 : 0;
+    std::vector<Int2> cells(cells_.begin() + std::ptrdiff_t(from), cells_.begin() + std::ptrdiff_t(a));
+    std::vector<float> cu(cellU_.begin() + std::ptrdiff_t(from), cellU_.begin() + std::ptrdiff_t(a + 1));
+    for (Int2 c : p) cells.push_back(c);
+    const float offset = s_ - cellS_[i];
+    CrawlPath path(cells);
+    std::vector<float> cs;
+    for (size_t k = 0; k < cells.size(); ++k) {
+        // each cell centre is searched for just past the last (cells are 4 m apart)
+        const float lo = cs.empty() ? 0.0f : cs.back() + 0.5f;
+        cs.push_back(path.project(cellCenter(cells[k]), lo, lo + 8.0f));
+    }
+    const size_t n = cells.size();
+    for (size_t k = cu.size(); k < n; ++k) {
+        const Int2 c = cells[k];
+        const bool room = maze.kind(c) == CellKind::Room;
+        const bool doorNext = (k + 1 < n && maze.kind(cells[k + 1]) == CellKind::Room) ||
+                              (k > 0 && maze.kind(cells[k - 1]) == CellKind::Room);
+        int surf = surfacePref_;
+        if (room || doorNext) surf = 0;
+        else if ((surf == 1 || surf == 3) && !straightCell(maze, c)) surf = 2;
+        cu.push_back(uForSurface(surf));
+    }
+    cells_ = cells;
+    path_ = std::move(path);
+    cellS_ = cs;
+    cellU_ = cu;
+    s_ = cellS_[i - from] + offset;
+    return true;
+}
+
+bool Hunter::chooseRoamGoal(const Maze& maze, const Level& level, bool avoidDeadEnds, bool ahead) {
     const Int2 c = cells_.empty() ? cell() : cells_[cells_.size() - 1];
+    if (ahead) {
+        // one cell before the end of its leg: the next leg branches off from the last cell,
+        // so the new corner starts ahead of it (planned at the very end, a turn there would
+        // snap it sideways). Never turns round: that waits for the end.
+        for (int attempt = 0; attempt < 120; ++attempt) {
+            Int2 g{c.x + rng_.range(-9, 9), c.y + rng_.range(-9, 9)};
+            if (!maze.inBounds(g) || maze.kind(g) == CellKind::Void) continue;
+            if (avoidDeadEnds && deadEnd(maze, g)) continue;
+            const int dist = std::abs(g.x - c.x) + std::abs(g.y - c.y);
+            if (dist < 4) continue;
+            if (level.sections.moodAt(g) == Mood::Lit && !rng_.chance(0.25f)) continue;
+            const int keep = surfacePref_;
+            const float r = rng_.unit();
+            surfacePref_ = r < 0.5f ? 2 : r < 0.65f ? 1 : r < 0.8f ? 3 : 0;
+            lastRoute_ = "roam (planned ahead)";
+            if (routeAhead(maze, g)) return true;
+            surfacePref_ = keep;
+        }
+        return false;
+    }
     for (int attempt = 0; attempt < 60; ++attempt) {
         Int2 g{c.x + rng_.range(-9, 9), c.y + rng_.range(-9, 9)};
         if (!maze.inBounds(g) || maze.kind(g) == CellKind::Void) continue;
+        if (avoidDeadEnds && deadEnd(maze, g)) continue;
         const int dist = std::abs(g.x - c.x) + std::abs(g.y - c.y);
         if (dist < 4) continue;
         if (level.sections.moodAt(g) == Mood::Lit && !rng_.chance(0.25f)) continue;
         const float r = rng_.unit();
         surfacePref_ = r < 0.5f ? 2 : r < 0.65f ? 1 : r < 0.8f ? 3 : 0;
         // no U-turns unless there is no other way (a dead end)
-        if (route(maze, g, attempt >= 45)) return;
+        lastRoute_ = attempt >= 45 ? "roam (may turn round)" : "roam";
+        if (route(maze, g, attempt >= 45)) return true;
     }
+    return false;
+}
+
+bool Hunter::chooseDriftGoal(const Maze& maze, const HuntWorld& w) {
+    const Int2 pc = cellOf(w.player);
+    const int r = std::max(2, w.tuning->driftSpread);
+    for (int attempt = 0; attempt < 40; ++attempt) {
+        Int2 g{pc.x + rng_.range(-r, r), pc.y + rng_.range(-r, r)};
+        if (!maze.inBounds(g) || maze.kind(g) == CellKind::Void || deadEnd(maze, g)) continue;
+        if (std::abs(g.x - pc.x) + std::abs(g.y - pc.y) < 2) continue;  // roughly, never exactly
+        const int keep = surfacePref_;
+        const float s = rng_.unit();
+        surfacePref_ = s < 0.5f ? 2 : s < 0.65f ? 1 : s < 0.8f ? 3 : 0;
+        lastRoute_ = "drift";
+        if (routeAhead(maze, g)) return true;
+        surfacePref_ = keep;
+    }
+    return false;  // you are behind it: it tries again at the next cell centre
 }
 
 void Hunter::spawn(const Maze& maze, Int2 c, int surface) {
@@ -165,6 +274,7 @@ void Hunter::spawn(const Maze& maze, Int2 c, int surface) {
         Int2 g{c.x + rng_.range(-8, 8), c.y + rng_.range(-8, 8)};
         if (!maze.inBounds(g) || maze.kind(g) == CellKind::Void || std::abs(g.x - c.x) + std::abs(g.y - c.y) < 4)
             continue;
+        lastRoute_ = "spawn";
         if (route(maze, g)) break;
     }
     surfacePref_ = pref;
@@ -190,8 +300,11 @@ bool Hunter::canSee(const HuntWorld& w) const {
 void Hunter::alert(const HuntWorld& w, bool charge) {
     if (!alive() || state_ == HunterState::Leap || state_ == HunterState::Feed) return;
     surfacePref_ = 2;
+    investigate_ = false;
+    drifting_ = false;
     setState(charge ? HunterState::Chase : HunterState::Stalk);
     stalkTime_ = 0.0f;
+    lastRoute_ = "alert";
     route(*w.maze, cellOf(w.player));
 }
 
@@ -240,9 +353,11 @@ void Hunter::update(float dt, const HuntWorld& w) {
         const Mat4 body = Creature::blendFrames(leapFrom_, flying, std::min(1.0f, t * 4.0f));
         creature_.poseRigid(body, 1.0f, 2.2f, 1.0f, -std::min(1.0f, t * 2.5f), w.time);
         if (t >= 1.0f) {
-            if (w.playerAlive && length(w.player - creature_.headPosition()) < 1.4f) {
+            const bool reached = w.playerAlive && length(w.player - creature_.headPosition()) < 1.4f;
+            if (reached && w.grabbable) {
                 setState(HunterState::Feed);
             } else {  // missed: lands and comes again
+                if (reached) ++reachedPlayer_;  // (benchmarks: the game replaces it far away)
                 cells_.clear();
                 cellS_.clear();
                 cellU_.clear();
@@ -265,12 +380,30 @@ void Hunter::update(float dt, const HuntWorld& w) {
         if (state_ == HunterState::Roam) {
             if (sees) alert(w, false);
             else if (w.playerAlive && dist < 5.0f) alert(w, true);
+            else if (w.playerAlive && w.playerDist && w.noiseRange > 0.0f && hearCooldown_ <= 0.0f) {
+                // footsteps (round 11): within earshot by walking distance, it goes to look
+                const Int2 c = cell();
+                if (maze.inBounds(c)) {
+                    const int d = (*w.playerDist)[size_t(c.y * maze.width() + c.x)];
+                    if (d >= 0 && float(d) * kCell <= w.noiseRange) {
+                        investigate_ = true;
+                        investigateCell_ = cellOf(w.player);
+                        hearCooldown_ = 6.0f;
+                    }
+                }
+            }
         }
+    }
+    hearCooldown_ = std::max(0.0f, hearCooldown_ - dt);
+    // drifting toward the player (round 11): armed while roaming, used at the end of a leg
+    if (state_ == HunterState::Roam && w.tuning && w.tuning->drift) {
+        if (driftTimer_ < 0.0f) driftTimer_ = w.tuning->driftMin + rng_.unit() * (w.tuning->driftMax - w.tuning->driftMin);
+        driftTimer_ = std::max(0.0f, driftTimer_ - dt);
     }
     if (w.shotFired && w.playerAlive && dist < 30.0f && state_ != HunterState::Chase) alert(w, true);
     if (!w.playerAlive && state_ != HunterState::Roam) {
         setState(HunterState::Roam);
-        chooseRoamGoal(maze, *w.level);
+        chooseRoamGoal(maze, *w.level, w.tuning && w.tuning->drift);
     }
     if (state_ == HunterState::Stalk) {
         stalkTime_ += dt;
@@ -296,6 +429,7 @@ void Hunter::update(float dt, const HuntWorld& w) {
 
     // move
     float speed = state_ == HunterState::Chase ? kChaseSpeed : state_ == HunterState::Stalk ? kStalkSpeed : kRoamSpeed;
+    if (state_ == HunterState::Roam && drifting_) speed = kDriftSpeed;
     // stalking: a pause to look and hiss when it first sees you
     if (state_ == HunterState::Stalk && stateTime_ < 1.1f) speed *= 0.15f;
     speed *= 1.0f - 0.85f * flinch_;
@@ -303,16 +437,39 @@ void Hunter::update(float dt, const HuntWorld& w) {
     s_ += speed * dt;
     // at each cell centre: chasers and stalkers re-aim at the player
     bool crossed = false;
-    for (float cs : cellS_)
-        if (sOld < cs && s_ >= cs) crossed = true;
+    size_t crossedCell = 0;
+    for (size_t k = 0; k < cellS_.size(); ++k)
+        if (sOld < cellS_[k] && s_ >= cellS_[k]) {
+            crossed = true;
+            crossedCell = k;
+        }
     const bool atEnd = s_ >= cellS_.back();
     if (atEnd) s_ = cellS_.back();
+    // roaming, one cell before the end of the leg: the next leg is planned now (see chooseRoamGoal)
+    const bool lastButOne = crossed && !atEnd && cellS_.size() >= 2 && crossedCell + 2 == cellS_.size();
     if ((crossed || atEnd) && (state_ == HunterState::Chase || state_ == HunterState::Stalk)) {
+        lastRoute_ = "chase";
         if (!route(maze, cellOf(w.player)) && atEnd) {
             // same cell as the player but out of leap reach: creep in
         }
+    } else if ((crossed || atEnd) && state_ == HunterState::Roam && investigate_) {
+        // heard you: from this cell centre, to where the sound came from
+        // (behind it: it carries on, and turns at the end of its leg like any roamer)
+        investigate_ = false;
+        drifting_ = false;
+        lastRoute_ = "heard";
+        if (!routeAhead(maze, investigateCell_) && atEnd) chooseRoamGoal(maze, *w.level, w.tuning && w.tuning->drift);
+    } else if ((crossed || atEnd) && state_ == HunterState::Roam && w.tuning && w.tuning->drift &&
+               driftTimer_ == 0.0f && w.playerAlive && chooseDriftGoal(maze, w)) {
+        // drift: from this cell centre, toward roughly where you are; then a new wait
+        driftTimer_ = -1.0f;
+        drifting_ = true;
+        ++drifts_;
+    } else if (lastButOne && state_ == HunterState::Roam) {
+        if (chooseRoamGoal(maze, *w.level, w.tuning && w.tuning->drift, true)) drifting_ = false;
     } else if (atEnd && state_ == HunterState::Roam) {
-        chooseRoamGoal(maze, *w.level);
+        drifting_ = false;
+        chooseRoamGoal(maze, *w.level, w.tuning && w.tuning->drift);
     }
     pose(w, dt);
 }

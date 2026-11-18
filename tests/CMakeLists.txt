@@ -107,6 +107,29 @@ bulkhead_png_test(bench_walk bench
   GAME  --bench "${CAP}/bench_walk" --res 1920x1080 --seed 1234
   CHECK --file "${CAP}/bench_walk/frame_final.png" --width 1920 --height 1080)
 
+# --- encounters (round 11, no GPU) --------------------------------------------
+# How long a simulated player exploring the ship takes to first see a creature, with the
+# creature numbers before round 11 ("original": three, no drift, no hearing) and after.
+# Each writes encounters.log (summary at the end) and encounters.csv. Label "encounters".
+add_test(NAME encounters_smoke COMMAND Bulkhead --encounters "${CAP}/encounters_smoke" --runs 2x1 --minutes 2)
+set_tests_properties(encounters_smoke PROPERTIES LABELS unit)
+add_test(NAME encounters_original COMMAND Bulkhead --encounters "${CAP}/encounters_original" --hunt original)
+add_test(NAME encounters_new COMMAND Bulkhead --encounters "${CAP}/encounters_new")
+set_tests_properties(encounters_original encounters_new PROPERTIES LABELS encounters RUN_SERIAL TRUE)
+# How the round 11 numbers were chosen: a grid of counts, drift timings and hearing ranges
+# (10 ships x 2 runs of 6 minutes each). Label "diag".
+add_test(NAME encounters_sweep COMMAND Bulkhead --encounters "${CAP}/encounters_sweep" --sweep --runs 10x2 --minutes 6)
+set_tests_properties(encounters_sweep PROPERTIES LABELS diag RUN_SERIAL TRUE)
+
+# The timing run with creatures loose, hunting the walk (they can't grab it, so they stay
+# close): the original three, and the round 11 number. Label "bench".
+bulkhead_png_test(bench_creatures_original bench
+  GAME  --bench "${CAP}/bench_creatures_original" --res 1920x1080 --seed 1234 --hunt original --creatures 3
+  CHECK --file "${CAP}/bench_creatures_original/frame_final.png" --width 1920 --height 1080)
+bulkhead_png_test(bench_creatures bench
+  GAME  --bench "${CAP}/bench_creatures" --res 1920x1080 --seed 1234 --creatures 10
+  CHECK --file "${CAP}/bench_creatures/frame_final.png" --width 1920 --height 1080)
+
 # --- package ----------------------------------------------------------------
 # The download: build the zip, unpack it into an empty folder, and run the game from
 # there (help, --check, and a short ray-traced capture). GitHub's machines run the same

@@ -303,11 +303,20 @@ void Game::updateEffects() {
             dynamic_.push_back({im.position + im.normal * 0.15f, col * (9.0f * f * f), 0.03f, 8.0f});
         }
     }
-    // each hunter's glow lights its surroundings a little (the throat and seams)
-    for (const Hunter& h : hunters_) {
+    // each hunter's glow lights its surroundings a little (the throat and seams): the three
+    // nearest within 30 m (each light costs shadow rays on every pixel in its range, and with
+    // ten loose several can close in at once; the rest still glow, they just cast no light)
+    std::vector<std::pair<float, size_t>> lit;
+    for (size_t i = 0; i < hunters_.size(); ++i) {
+        const Hunter& h = hunters_[i];
         if (h.state() == HunterState::Dead || h.glow() < 0.05f) continue;
-        Vec3 d = h.headPosition() - cam;
-        if (dot(d, d) > 30.0f * 30.0f) continue;
+        const Vec3 d = h.headPosition() - cam;
+        if (dot(d, d) <= 30.0f * 30.0f) lit.push_back({dot(d, d), i});
+    }
+    std::sort(lit.begin(), lit.end());
+    if (lit.size() > 3) lit.resize(3);
+    for (const auto& near : lit) {
+        const Hunter& h = hunters_[near.second];
         dynamic_.push_back({h.headPosition(), Vec3{1.0f, 0.45f, 0.1f} * (0.9f * h.glow()), 0.08f, 5.0f});
         // and the seams along its back light the wall or ceiling it is on: in the dark
         // it shows as a shape against its own amber glow
@@ -513,6 +522,8 @@ void Game::update(float dt, const InputState& in) {
     const float height = kStandHeight + (kCrouchHeight - kStandHeight) * crouch_;
 
     float speed = (in.run && crouch_ < 0.5f ? 5.8f : 3.4f) * (1.0f - 0.5f * crouch_);
+    // footsteps the creatures can hear: running is loud, creeping crouched is silent
+    noise_ = wl <= 0.0f || crouch_ > 0.5f ? 0 : in.run ? 2 : 1;
     Vec2 target = wl > 0 ? wish * (speed / wl) : Vec2{};
     float k = 1.0f - std::exp(-12.0f * dt);
     velocity_ = velocity_ + (target - velocity_) * k;
@@ -546,8 +557,17 @@ HuntWorld Game::huntWorld(bool shot) const {
     w.playerForward = camera_.forward();
     w.playerAlive = !playerDead();
     w.shotFired = shot;
+    w.grabbable = !invulnerable_;
     w.time = time_;
+    w.tuning = &tuning_;
+    w.playerDist = playerDist_.empty() ? nullptr : &playerDist_;
+    w.noiseRange = noise_ >= 2 ? tuning_.hearRun : noise_ == 1 ? tuning_.hearWalk : 0.0f;
     return w;
+}
+
+void Game::movePlayer(const Camera& c) {
+    camera_ = c;
+    sway_ = {};
 }
 
 void Game::spawnHunterAt(Int2 cell, int surface, uint64_t seed) {
@@ -558,12 +578,13 @@ void Game::spawnHunterAt(Int2 cell, int surface, uint64_t seed) {
     respawnAt_.push_back(-1.0f);
 }
 
-void Game::spawnHunters(int count) {
+void Game::spawnHunters(int count, uint64_t salt) {
     huntersWanted_ = count;
+    spawnSalt_ = salt;
     hunters_.clear();
     respawnAt_.clear();
     const std::vector<int> dist = maze_.distancesFrom(cellOf(camera_.position));
-    Rng rng(maze_.params().seed ^ (0x51ed27u + spawnCounter_ * 7919u), 0xc0ffeeu);
+    Rng rng(maze_.params().seed ^ (0x51ed27u + spawnCounter_ * 7919u) ^ (salt * 0x9e3779b97f4a7c15ull), 0xc0ffeeu);
     std::vector<Int2> picked;
     for (int attempt = 0; attempt < 4000 && int(picked.size()) < count; ++attempt) {
         Int2 c{rng.range(0, maze_.width() - 1), rng.range(0, maze_.height() - 1)};
@@ -571,12 +592,14 @@ void Game::spawnHunters(int count) {
         const int d = dist[size_t(c.y * maze_.width() + c.x)];
         if (d < 12) continue;  // never right on top of the player
         if (level_.sections.moodAt(c) == Mood::Lit && !rng.chance(0.1f)) continue;
+        // spread out (a little closer together when there are many, so they all fit)
+        const int minApart = count <= 3 ? 8 : 6;
         bool apart = true;
-        for (Int2 o : picked) apart = apart && std::abs(o.x - c.x) + std::abs(o.y - c.y) >= 8;
+        for (Int2 o : picked) apart = apart && std::abs(o.x - c.x) + std::abs(o.y - c.y) >= minApart;
         if (!apart) continue;
         picked.push_back(c);
     }
-    for (Int2 c : picked) spawnHunterAt(c, 2, maze_.params().seed * 31u + (spawnCounter_++));
+    for (Int2 c : picked) spawnHunterAt(c, 2, maze_.params().seed * 31u + (spawnCounter_++) + salt * 1000003u);
 }
 
 void Game::restart() {
@@ -591,7 +614,7 @@ void Game::restart() {
     bolts_.clear();
     impacts_.clear();
     std::fill(doorOpen_.begin(), doorOpen_.end(), 0.0f);
-    if (huntersWanted_ > 0) spawnHunters(huntersWanted_);
+    if (huntersWanted_ > 0) spawnHunters(huntersWanted_, spawnSalt_);
 }
 
 float Game::redout() const {
@@ -608,36 +631,16 @@ float Game::redout() const {
 
 float Game::blackout() const { return playerDead() ? std::clamp((deathT_ - 2.4f) / 1.4f, 0.0f, 1.0f) : 0.0f; }
 
+void Game::stepCreatures(float dt) {
+    stepHunters(dt);
+    updateEffects();
+}
+
 void Game::stepWorld(float dt) {
     time_ += dt;
     updateDoors(dt);
     updateLighting();
-    const HuntWorld w = huntWorld(shotThisStep_);
-    shotThisStep_ = false;
-    for (size_t i = 0; i < hunters_.size(); ++i) {
-        Hunter& h = hunters_[i];
-        h.update(dt, w);
-        if (h.grabbedPlayer() && !playerDead()) {
-            deathT_ = 0.0f;
-            killer_ = int(i);
-            deathCam_ = camera_;
-        }
-        // the dead are replaced after a while, somewhere far away (window play)
-        if (h.state() == HunterState::Dead && h.deadFor() > 30.0f && huntersWanted_ > 0 && respawnAt_[i] < 0.0f) {
-            respawnAt_[i] = time_;
-            const std::vector<int> dist = maze_.distancesFrom(cellOf(camera_.position));
-            Rng rng(uint64_t(time_ * 1000.0f) + i, 0xbeefu);
-            for (int attempt = 0; attempt < 2000; ++attempt) {
-                Int2 c{rng.range(0, maze_.width() - 1), rng.range(0, maze_.height() - 1)};
-                if (maze_.kind(c) != CellKind::Corridor || dist[size_t(c.y * maze_.width() + c.x)] < 14) continue;
-                Hunter fresh(kit_, maze_.params().seed * 31u + (spawnCounter_++));
-                fresh.spawn(maze_, c, 2);
-                h = std::move(fresh);
-                respawnAt_[i] = -1.0f;
-                break;
-            }
-        }
-    }
+    stepHunters(dt);
     if (playerDead()) {
         deathT_ += dt;
         // knocked back and down onto the floor, looking up at it
@@ -656,6 +659,46 @@ void Game::stepWorld(float dt) {
     }
     reveal();
     updateEffects();
+}
+
+void Game::stepHunters(float dt) {
+    // hearing needs walking distances from the player's cell
+    if (!hunters_.empty() && (tuning_.hearWalk > 0.0f || tuning_.hearRun > 0.0f)) {
+        const Int2 pc = cameraCell();
+        if (pc != playerDistFrom_ && maze_.inBounds(pc)) {
+            playerDist_ = maze_.distancesFrom(pc);
+            playerDistFrom_ = pc;
+        }
+    }
+    const HuntWorld w = huntWorld(shotThisStep_);
+    shotThisStep_ = false;
+    for (size_t i = 0; i < hunters_.size(); ++i) {
+        Hunter& h = hunters_[i];
+        h.update(dt, w);
+        if (h.grabbedPlayer() && !playerDead()) {
+            deathT_ = 0.0f;
+            killer_ = int(i);
+            deathCam_ = camera_;
+        }
+        // the dead are replaced after a while, somewhere far away (window play); on the
+        // benchmark, so is one that reaches the player (as if it had been killed)
+        const bool replace = (h.state() == HunterState::Dead && h.deadFor() > 30.0f && huntersWanted_ > 0) ||
+                             (invulnerable_ && h.reachedPlayer() > 0);
+        if (replace && respawnAt_[i] < 0.0f) {
+            respawnAt_[i] = time_;
+            const std::vector<int> dist = maze_.distancesFrom(cellOf(camera_.position));
+            Rng rng(uint64_t(time_ * 1000.0f) + i, 0xbeefu);
+            for (int attempt = 0; attempt < 2000; ++attempt) {
+                Int2 c{rng.range(0, maze_.width() - 1), rng.range(0, maze_.height() - 1)};
+                if (maze_.kind(c) != CellKind::Corridor || dist[size_t(c.y * maze_.width() + c.x)] < 14) continue;
+                Hunter fresh(kit_, maze_.params().seed * 31u + (spawnCounter_++));
+                fresh.spawn(maze_, c, 2);
+                h = std::move(fresh);
+                respawnAt_[i] = -1.0f;
+                break;
+            }
+        }
+    }
 }
 
 float Game::walkDuration() const {

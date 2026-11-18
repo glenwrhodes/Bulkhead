@@ -74,6 +74,7 @@ add_library(bulkhead_lib STATIC
   src/game/Game.cpp        src/game/Game.h
   src/game/Creature.cpp    src/game/Creature.h
   src/game/Hunter.cpp      src/game/Hunter.h
+  src/game/Encounters.cpp  src/game/Encounters.h
   src/game/Effects.h)
 target_include_directories(bulkhead_lib PUBLIC src)
 target_link_libraries(bulkhead_lib PUBLIC bh_stb bh_cgltf)

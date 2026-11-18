@@ -21,6 +21,12 @@ Custom C++20 engine on DirectX 12 with DXR ray tracing (RTX 4090 Laptop GPU, ray
 | 9 | Round 8: the creature (rigid armoured plates, Blender rig and crawl cycle), crawling on floors, walls and ceilings | **Done (round 8)**: see The creature |
 | 10 | Round 9: hunting AI, leap, player death; four hits to kill | **Done (rounds 9-10)**: see Hunters |
 | 11 | Round 10: game loop with several creatures; full film pass | **Done (rounds 9-10)** |
+| 12 | Part 3, round 11: measure how long it takes to meet a creature; more of them, drifting toward the player and hearing footsteps; frame rate with them loose | **Done (round 11)**: see Finding the creatures |
+| 13 | Round 12: sound (mixer, window output, WAV beside every capture, ~25 sounds, credits) | Planned |
+| 14 | Round 13: the approach (crawl in on walls and ceiling, stop, hiss, crouch, leap from any surface) | Planned |
+| 15 | Round 14: the climbing film (floor, wall, ceiling, wall, floor, close up) | Planned |
+| 16 | Round 15: the motion scanner (blips on the minimap and map) | Planned |
+| 17 | Round 16: final pass (re-measure, every film with sound) | Planned |
 
 ## Maze generation (`src/world/Maze.*`)
 
@@ -174,11 +180,106 @@ Timing run after rounds 6-7: median 6.7 ms (lit 7.5, dim 7.6, derelict 5.8, dark
 - **Hits:** 18 spheres on its bones are tested against the camera ray. A hit makes it flinch for 0.35 s (it jolts back, the head pitches up, the jaws snap and the glow flares) and slows it. Hits throw amber sparks and an amber light, and leave no scorch.
 - **Light:** each hunter carries two amber lights, at the throat and above its back. In the dark it shows as a shape against its own glow.
 - **Death scene:** the camera is knocked back and down to the floor, looking up, with shaking. The creature sits on your face with its scythes raised and claws spread, biting in rhythm. Red drains the colour and closes in from the edges, then it fades to black. The window restarts the run after 4.6 s.
-- **Window play:** `--creatures N` (default 3) spawns them in non-lit sections at least 12 cells' walk from you. A dead one is replaced 30 s later, at least 14 cells away. The window title counts kills.
+- **Window play:** `--creatures N` (default 3; 10 since round 11) spawns them in non-lit sections at least 12 cells' walk from you. A dead one is replaced 30 s later, at least 14 cells away. The window title counts kills.
 - **Films:**
   - **`--scene hunt` (`film_hunt`, seed 1234, derelict corridor):** you walk in, it stalks on the ceiling, you back off and hit it twice, it charges, leaps, and you die. The scene ends 3 s into the fade.
   - **`--scene fight` (`film_fight`):** you hold the corridor; four hits, and its last lunge ends with it dead on its back.
   - The `level_tests` hunter checks require: the hunt reaches stalk, chase, leap and feed; the fight kills the creature with the player alive; three hits leave it alive and four kill it; and roaming hunters never move more than 0.4 m in a step.
+
+## Finding the creatures (round 11)
+
+Glen walked the ship for 5-10 minutes before he met a creature. Three of them roamed
+about 1500 walkable cells, wandering 4-9 cells at a time with nothing drawing them toward
+the player, and they only noticed you on sight (22 m) or within 5 m.
+
+**The encounter timer** (`src/game/Encounters.*`, `Bulkhead.exe --encounters <dir>`, no GPU):
+- A simulated player walks the ship at the window's walking speed (3.4 m/s, never stopping),
+  always heading for the nearest cell the map hasn't shown yet and facing where it walks.
+  It passes through props, never crouches and never fires.
+- The real `Game` and creature AI run around it at 30 steps a second. A run lasts 10 minutes;
+  after a death it restarts at the spawn, as the window does.
+- **Seen:** a live creature's head or body within 25 m, inside the window's field of view
+  (65° tall, about 97° wide), with nothing in the way (`raycastLevel`). Lighting is ignored.
+- **Encounter:** seen, or killed by one never seen (an ambush).
+- 10 ships (1234, 7, 42, 2026, 1-6) x 3 runs. Each run varies the player's choices and
+  where the creatures start (`spawnHunters(count, salt)`). 30 runs take 15-70 s on all cores.
+- ctest: `encounters_original` and `encounters_new` (label `encounters`), `encounters_smoke`
+  (unit), and `encounters_sweep` (diag: the grid used to pick the numbers).
+
+**Before and after** (30 runs of 10 minutes; "+" means some runs had none, counted as 600 s):
+
+| | Before (3, no drift) | After (10, drift, hearing) |
+|---|---|---|
+| First seen: mean / median | 279 s+ / 237 s (5 of 30 runs: none in 10 min) | **69 s / 57 s** (none: 0) |
+| First encounter (seen or killed): mean / median | 232 s+ / 159 s | 65 s / 53 s |
+| First within 25 m (what a scanner would show) | 128 s+ / 97 s | 30 s / 31 s |
+| Killed before ever seeing one | 6 of 30 runs | 3 of 30 |
+| Sightings per 10 min / creature seconds in view | 2.5 / 2.7 s | 8.9 / 10.8 s |
+| First seen on floor / wall / ceiling / mid-leap | 7 / 2 / 13 / 3 | 9 / 4 / 15 / 2 |
+
+The "before" column is the unchanged code (kept in `captures/encounters_baseline_before_round11`).
+`--hunt original` replays those numbers but includes this round's path fixes (below), which
+moves its mean first sighting to 303 s+, within the run-to-run spread.
+
+**What changed** (`HuntTuning`, `--hunt new|original`, `--creatures N` up to 24):
+- **Ten creatures** (was 3). With more than 3 they spawn at least 6 cells apart (was 8), so
+  all ten fit.
+- **Drift:** each roaming creature arms a timer (15-30 s). When it runs out, the creature
+  heads for a cell within 4 cells of the player (never closer than 2) from its next cell
+  centre, at 1.5 m/s (roaming is 1.1). Drift goals and, in this tuning, wander goals avoid
+  corridor closets, because reaching one means turning round (see below).
+- **Hearing:** footsteps carry 16 m of walking distance (running 35 m; creeping crouched is
+  silent). A roaming creature that hears you goes to look from its next cell centre.
+- **The sweep** (8, 10, 12 creatures x drift every 25-50 or 15-30 s, 20 runs of 6 min):
+  - Waiting for the end of a leg made the drift timing irrelevant, because a leg takes
+    20-50 s. Drifting from the next cell centre fixed that.
+  - 12 creatures gave the same numbers as 10, because only about 10 fit at 8 cells apart.
+  - 10 creatures with drifts every 15-30 s landed in the 45-75 s target.
+
+**Path changes that moved the creature** (found by the new 150 s, 10-creature check in
+`level_tests`):
+- **A leg ending on a turn.** A wandering leg ended exactly on a cell centre. If the next leg
+  turned there, the rounded corner (Chaikin, up to 1.1 m cut each side) runs up to about
+  half a metre from the centre, so the creature snapped sideways by up to 1 m.
+  - This was in the game before this round, with the original tuning too: 12 such snaps in
+    150 s across 10 creatures.
+  - Fix: one cell before the end, the next leg is planned with `routeAhead`. It keeps the old
+    path up to and including the next cell, so the new corner begins metres ahead.
+  - Drift and hearing re-routes use `routeAhead` as well.
+- **A route that loops back past itself.** `CrawlPath::project` searched the whole path for
+  the closest point, so a cell centre could snap onto a later stretch that passes nearby
+  (a 5 m jump).
+  - Fix: `routeAhead` projects each cell centre only within 8 m after the previous one
+    (`project(p, from, to)`).
+- **Turning round (known issue, not fixed).** When the only way on is back (a dead end, a
+  room with one door), the new path starts where it stands. The body behind the head piles
+  up on that point and unfolds as it moves off: a 0.7 m snap.
+  - It happened once in 150 s across ten creatures, with either tuning.
+  - `Hunter::uTurns()` counts these, and `level_tests` prints them instead of failing.
+  - It needs a real turning animation (round 13).
+- The biggest step outside a turn is now 0.17 m (round 11 tuning) and 0.12 m (original).
+  The hunt and fight scenes play exactly as before.
+
+**Frame rate** (`bench_creatures` / `bench_creatures_original`, label `bench`; the walk at 1080p,
+1 spp + history):
+- **How the bench runs:** the creatures hunt the walk but can't grab it.
+  - At first, a creature whose leap reached the camera just landed and leapt again. With
+    ten, several piled up on the camera, and 2 lights each shaded every pixel: median
+    12 ms, 15 ms in dark sections.
+  - Now one that reaches the camera is replaced far away, as if it had been killed.
+  - In play, only the **three nearest creatures cast light**. The rest still glow, they just
+    don't light their surroundings.
+
+| | Median | 95th | With a creature in view (median) | Creature AI + lights, CPU (median / 95th / worst) |
+|---|---|---|---|---|
+| No creatures (`bench_walk`) | 7.2 ms | 9.7 ms | - | - |
+| 3, original tuning | 7.8 ms | 11.0 ms | 6.1 ms | 0.18 / 0.31 / 8.8 ms |
+| 10, round 11 (two runs) | 6.8-8.1 ms | 9.2-11.6 ms | 8.6-9.1 ms | 0.64 / 1.08 / 23 ms |
+
+Run to run, the same section varies by 0.5-1 ms on this laptop, so the cost of ten
+creatures is within that. The 23 ms CPU worst case is a one-frame spike, most likely a
+creature being replaced (a new `Creature` built from the kit plus a path over the whole
+ship); that hasn't been confirmed.
 
 ## The walking weave (fixed after round 10)
 

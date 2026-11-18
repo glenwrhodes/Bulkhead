@@ -42,7 +42,9 @@ OPTIONS
 -------
   Bulkhead.exe --seed 1234       a particular ship (the same seed is the same ship)
   Bulkhead.exe --res 1920x1080   window size
-  Bulkhead.exe --creatures 5     how many creatures (default 3, 0 for none)
+  Bulkhead.exe --creatures 5     how many creatures (default 10, 0 for none, up to 24)
+  Bulkhead.exe --hunt original   the creatures as they were before: three, and they
+                                 don't come looking for you
   Bulkhead.exe --help            everything else, including the headless
                                  capture, benchmark and map modes
 

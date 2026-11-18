@@ -23,6 +23,7 @@
 #include "core/Image.h"
 #include "core/Log.h"
 #include "core/Window.h"
+#include "game/Encounters.h"
 #include "game/Game.h"
 #include "render/Gpu.h"
 #include "render/Renderer.h"
@@ -55,6 +56,13 @@ OverheadMap overheadFor(const Maze& maze, const Sections& sections, int cellPx) 
 }
 
 OverheadMap gameMap(const Game& game) { return overheadFor(game.maze(), game.level().sections, kGameMapCellPx); }
+
+// How the creatures find the player: --hunt picks the set, --creatures overrides the count.
+HuntTuning huntTuning(const Options& o) {
+    HuntTuning t = o.hunt == "original" ? HuntTuning::original() : HuntTuning::round11();
+    if (o.creatures >= 0) t.creatures = o.creatures;
+    return t;
+}
 
 void uploadMap(Renderer& renderer, const OverheadMap& map) {
     renderer.setMapImage(map.image, map.cellPx, map.marginPx);
@@ -576,14 +584,47 @@ int runBench(const Options& o) {
     // default: the whole walk from the start time to the exit
     const int frames = o.frames > 0 ? o.frames : std::max(1, int(std::ceil((game.walkDuration() - o.start) / dt)));
     const int saveEvery = frames > 1200 ? 300 : 120;
+    // --creatures N: they hunt the walk (and can't grab it: a leap that reaches the camera
+    // lands and comes again, so they stay close: a harder case than real play)
+    const int creatures = std::max(0, o.creatures);
+    if (creatures > 0) {
+        game.setHuntTuning(huntTuning(o));
+        game.setInvulnerable(true);
+        game.spawnHunters(creatures);
+        log::info("Bench with {} creatures loose ({} hunt), hunting the walk", game.hunters().size(), o.hunt);
+    }
+    auto creaturesInView = [&](const Camera& cam) {
+        int n = 0;
+        const float tanV = std::tan(cam.fovY * 0.5f), tanH = tanV * float(o.width) / float(o.height);
+        for (const Hunter& h : game.hunters()) {
+            if (h.state() == HunterState::Dead) continue;
+            const Vec3 d = h.bodyCenter() - cam.position;
+            const float dist = length(d), z = dot(d, cam.forward());
+            if (dist > 30.0f || z < 0.1f) continue;
+            if (std::abs(dot(d, cam.right())) > tanH * z + 1.2f || std::abs(dot(d, cam.up())) > tanV * z + 1.2f) continue;
+            Vec3 nrm;
+            if (raycastLevel(game.maze(), game.level(), cam.position, d * (1.0f / dist), dist, game.doorOpen(), nrm) >=
+                dist - 0.5f)
+                ++n;
+        }
+        return n;
+    };
     std::vector<SceneInstance> instances;
-    std::vector<double> ms;
+    std::vector<double> ms, msWithCreature, aiMs;
     std::vector<double> byMood[kMoodCount];
+    int maxInView = 0;
     for (int i = 0; i < frames; ++i) {
         const float t = o.start + float(i) * dt;
         game.setWalkTime(t);
+        if (creatures > 0) {
+            const auto a = std::chrono::steady_clock::now();
+            game.stepCreatures(dt);
+            aiMs.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - a).count());
+        }
         game.updateDoors(dt);
         game.buildInstances(instances);
+        const int inView = creatures > 0 ? creaturesInView(game.camera()) : 0;
+        maxInView = std::max(maxInView, inView);
         FrameSettings s;
         s.camera = game.camera();
         s.rayTracing = o.rayTracing;
@@ -593,7 +634,11 @@ int runBench(const Options& o) {
         s.playerMapUV = mapUV(map, game.camera().position);
         s.resetHistory = i == 0;
         applyGame(s, game, o);
-        s.maxHistory = game.lightingChange() > 0.15f ? 3 : 16;
+        // as the window does: short history for flicker, and for creatures moving nearby
+        bool hunterNear = false;
+        for (const Hunter& hh : game.hunters())
+            hunterNear = hunterNear || (hh.alive() && length(hh.headPosition() - game.camera().position) < 14.0f);
+        s.maxHistory = game.lightingChange() > 0.15f ? 3 : hunterNear ? 6 : 16;
         const auto a = std::chrono::steady_clock::now();
         const bool last = i + 1 == frames;
         if ((i + 1) % saveEvery == 0 || last) {
@@ -606,6 +651,7 @@ int runBench(const Options& o) {
         }
         const double frameMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - a).count();
         ms.push_back(frameMs);
+        if (inView > 0) msWithCreature.push_back(frameMs);
         byMood[int(game.moodAtCamera())].push_back(frameMs);
     }
     auto report = [&](const std::string& label, std::vector<double> v) {
@@ -621,7 +667,80 @@ int runBench(const Options& o) {
                        o.flashlight ? "on" : "off"),
            ms);
     for (int m = 0; m < kMoodCount; ++m) report(std::format("  in {} sections", toString(Mood(m))), byMood[m]);
+    if (creatures > 0) {
+        report("  with a creature in view", msWithCreature);
+        log::info("  creatures: {} loose, at most {} in view at once; creature AI and their lights (CPU) on the "
+                  "same frames:",
+                  creatures, maxInView);
+        report("  creature step (CPU)", aiMs);
+    }
     log::info("(every {}th frame and the last also read back and save a PNG, which shows in 'worst')", saveEvery);
+    log::setFile({});
+    return 0;
+}
+
+// --encounters: how long a simulated player exploring the ship takes to first see a
+// creature (src/game/Encounters.h). No GPU.
+int runEncounterTimer(const Options& o) {
+    const fs::path dir = o.output;
+    fs::create_directories(dir);
+    log::setFile(dir / "encounters.log");
+    Kit kit;
+    loadKit(kit, o);
+    EncounterConfig cfg;
+    cfg.tuning = huntTuning(o);
+    cfg.minutes = o.minutes;
+    cfg.mazeWidth = o.mazeWidth;
+    cfg.mazeHeight = o.mazeHeight;
+    std::vector<uint64_t> seeds;
+    if (o.seed) {
+        seeds.push_back(*o.seed);
+    } else {
+        const uint64_t named[] = {1234, 7, 42, 2026};
+        for (int i = 0; i < o.encounterSeeds; ++i) seeds.push_back(i < 4 ? named[i] : uint64_t(i - 3));
+    }
+    log::info("Encounter timer: {} ships x {} runs, {:.0f} min each, hunt '{}'", seeds.size(), o.encounterVariants,
+              o.minutes, o.hunt);
+    const auto started = std::chrono::steady_clock::now();
+    if (o.sweep) {
+        for (int count : {8, 10, 12})
+            for (float dmin : {25.0f, 15.0f})
+                for (float hear : {16.0f}) {
+                    EncounterConfig c = cfg;
+                    c.tuning = HuntTuning::round11();
+                    c.tuning.creatures = count;
+                    c.tuning.driftMin = dmin;
+                    c.tuning.driftMax = dmin * 2.0f;
+                    c.tuning.hearWalk = hear;
+                    c.tuning.hearRun = hear * 2.2f;
+                    for (const std::string& line : summarizeEncounters(runEncounters(kit, seeds, o.encounterVariants, c), c))
+                        log::info("{}", line);
+                }
+        log::info("Sweep done in {:.1f} s", std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count());
+        log::setFile({});
+        return 0;
+    }
+    const std::vector<EncounterRun> runs = runEncounters(kit, seeds, o.encounterVariants, cfg);
+    const char* surfaces[] = {"floor", "wall", "ceiling", "air"};
+    std::ofstream csv(dir / "encounters.csv");
+    csv << "seed,variant,encounter_s,first_seen_s,first_death_s,first_within_25m_s,seen_on,seen_state,seen_m,"
+           "sightings,deaths,view_floor_s,view_wall_s,view_ceiling_s,view_air_s,max_in_view,cells_shown,ms_per_step\n";
+    for (const EncounterRun& r : runs) {
+        const char* on = r.seenSurface >= 0 ? surfaces[r.seenSurface] : "-";
+        const char* st = r.seenState >= 0 ? toString(HunterState(r.seenState)) : "-";
+        csv << std::format("{},{},{:.2f},{:.2f},{:.2f},{:.2f},{},{},{:.1f},{},{},{:.1f},{:.1f},{:.1f},{:.1f},{:.0f},{},{:.4f}\n",
+                           r.seed, r.variant, r.encounter, r.firstSeen, r.firstGrab, r.firstNear, on, st,
+                           r.seenDistance, r.sightings, r.deaths, r.viewSeconds[0], r.viewSeconds[1], r.viewSeconds[2],
+                           r.viewSeconds[3], r.maxInView, r.explored, r.msPerStep);
+        log::info("  seed {:>5} run {}: encounter {:7.1f} s (seen {:7.1f}, killed {:7.1f}, within 25 m {:6.1f}); "
+                  "first seen on the {} while {} at {:.1f} m; {} sightings, {} deaths",
+                  r.seed, r.variant, r.encounter, r.firstSeen, r.firstGrab, r.firstNear, on, st, r.seenDistance,
+                  r.sightings, r.deaths);
+    }
+    log::info("(-1 = not in the run)");
+    for (const std::string& line : summarizeEncounters(runs, cfg)) log::info("{}", line);
+    log::info("Encounter timer done in {:.1f} s",
+              std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count());
     log::setFile({});
     return 0;
 }
@@ -648,7 +767,8 @@ int runInteractive(const Options& o) {
     auto newShip = [&] {
         game = std::make_unique<Game>(kit, mazeParams(o, seed));
         game->setFlashlight(flashlight);
-        game->spawnHunters(o.creatures);
+        game->setHuntTuning(huntTuning(o));
+        game->spawnHunters(game->huntTuning().creatures);
         describe(*game);
         map = gameMap(*game);
         uploadMap(renderer, map);
@@ -793,6 +913,7 @@ int main(int argc, char** argv) {
             case Options::Mode::Capture: return runCapture(*options);
             case Options::Mode::Shots: return runShots(*options);
             case Options::Mode::Bench: return runBench(*options);
+            case Options::Mode::Encounters: return runEncounterTimer(*options);
             case Options::Mode::Interactive: return runInteractive(*options);
         }
     } catch (const std::exception& e) {

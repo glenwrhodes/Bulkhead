@@ -20,11 +20,14 @@ driver.
 Find the red airlock: it is the room farthest from where you start. The controls are in
 the table under [Play](#play) and in `PLAY.txt` in the zip.
 
-**Current state (rounds 5-8):**
-- Three things live in the ship: biomechanical crawlers (eyeless wedge skull, four petal
+**Current state (rounds 5-11):**
+- Ten things live in the ship: biomechanical crawlers (eyeless wedge skull, four petal
   jaws, hooked forelimbs, plated limbs, amber seams) that roam floors, walls and
-  ceilings. One that sees you stalks you along the ceiling, charges, and leaps at your
-  face; if it reaches you, you die. Four hits kill one. Dead ones are replaced.
+  ceilings. Every so often one heads for roughly where you are, and they hear footsteps
+  (running carries further; creeping crouched is silent). One that sees you stalks you
+  along the ceiling, charges, and leaps at your face; if it reaches you, you die. Four
+  hits kill one. Dead ones are replaced. A player exploring meets the first after about a
+  minute (`--creatures N` and `--hunt original` change this).
 - The generated ship (40 × 40 cells, 160 m square) is built from the Blender kit:
   corridors, rooms, doors and props.
 - It is split into sections, each with a mood: **lit**, **dim** (warm, failing lights),
@@ -85,8 +88,10 @@ Find the red airlock: it is the room farthest from where you start.
 Bulkhead.exe --capture out --res 1920x1080 --fps 30 --spp 12   # walk start -> exit as PNG frames
 Bulkhead.exe --shots out --res 1920x1080 --spp 32              # fixed views incl. one corridor per mood, RT on and off
 Bulkhead.exe --bench out --res 1920x1080                       # window-mode frame times (by mood) over the whole walk
+Bulkhead.exe --bench out --res 1920x1080 --creatures 10        # the same with ten creatures loose, hunting the walk
+Bulkhead.exe --encounters out                                  # no GPU: how long until an exploring player first sees a creature
 Bulkhead.exe --overhead map.png --seed 7                       # top-down map with sections in colour, no GPU
-Bulkhead.exe --help                                            # also --size, --flashlight on|off, --haze X
+Bulkhead.exe --help                                            # also --size, --flashlight on|off, --haze X, --hunt original
 ```
 
 ## Test
@@ -94,7 +99,8 @@ Bulkhead.exe --help                                            # also --size, --
 ```
 ctest --test-dir build -C Release -L "unit|smoke" --output-on-failure    # quick
 ctest --test-dir build -C Release -L film --output-on-failure            # the 1080p film captures (~20 min)
-ctest --test-dir build -C Release -L bench                               # the timing run (~2 min)
+ctest --test-dir build -C Release -L bench                               # the timing runs (~2.5 min each)
+ctest --test-dir build -C Release -L encounters                          # time to first see a creature, before/after (~1.5 min)
 ```
 
 A single ctest command is cut off after 10 minutes on this machine, so run the two halves
@@ -114,6 +120,8 @@ Captures go to `captures/` (git-ignored):
 | `captures/shots/` | RT on/off pairs, including `shot_corridor_{lit,dim,dark,derelict}_rt.png` and `shot_{broken_ceiling,steam,low_pipe,beacon}_rt.png` |
 | `captures/bench_walk/bench.log` | Window-mode timing over the whole walk, by mood |
 | `captures/bench/bench.log` | Short window-mode timing (smoke) |
+| `captures/bench_creatures/bench.log`, `bench_creatures_original/` | The walk's timing with 10 creatures loose (and with the original 3) |
+| `captures/encounters_new/encounters.log`, `encounters_original/` | Time until an exploring player first sees a creature: the summary is at the end; `encounters.csv` has every run |
 
 Map colours: steel blue = lit, amber = dim, indigo = dark, rust = derelict; dashed white
 gates mark the openings between sections.

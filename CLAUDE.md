@@ -73,6 +73,14 @@ milestone status are in `docs/PLAN.md`; update that table when a milestone lands
   captures have none. They re-route only at cell centres; never let a path change move
   the creature (level_tests checks a 0.4 m-per-step limit).
 - capture_check rejects flat frames, so a scene must not end on a solid black fade.
+- How often you meet a creature is measured, not guessed: `ctest -L encounters` (no GPU,
+  `src/game/Encounters.*`). Re-run it after any change to the AI, the counts or the spawns.
+  `HuntTuning` (in `Hunter.h`) holds the numbers; `--hunt original` is the game before round 11.
+- Re-routing a creature: use `Hunter::routeAhead` (keeps the path up to and including the
+  next cell) for anything new. Re-routing at the current cell centre snaps it sideways
+  when the new path turns there, because corners are rounded. `CrawlPath::project` without
+  a range can snap onto a stretch that passes nearby. Turning round on the path still snaps
+  (`Hunter::uTurns`, a known issue).
 - Window movement (`Game::update`) is not what the scripted films run. Check it with
   `--scene weave` (the window's own update at `--step-hz`) and the "walking straight" unit
   test at several frame rates. Camera-only offsets (sway, bob) must never feed back into

@@ -46,7 +46,15 @@ std::string usageText() {
         "  --flashlight on|off  the flashlight under the gun (default on)\n"
         "  --scene walk|fire|crawl|hunt|fight  capture: the walk start -> exit (default), firing six shots,\n"
         "                    the creature crawling over you, a creature hunting you down, or killing one\n"
-        "  --creatures N     window: creatures loose in the ship (default 3, 0..8)\n"
+        "  --creatures N     creatures loose in the ship (window, bench, encounters; 0..24; default:\n"
+        "                    the game's, see --hunt; the bench has none unless given)\n"
+        "  --hunt new|original  how creatures find you: new (more of them, they drift toward where\n"
+        "                    you roughly are and hear footsteps) or original (before round 11)\n"
+        "  --encounters <dir>  no GPU: time how long a simulated player exploring the ship takes to\n"
+        "                    first see a creature; writes encounters.log and encounters.csv\n"
+        "  --runs SxV        encounters: S ships x V runs on each (default 10x3)\n"
+        "  --minutes M       encounters: length of each run (default 10)\n"
+        "  --sweep           encounters: try a grid of creature counts, drift timings and hearing\n"
         "  --scene weave     capture: the window's movement code, forward held, down a straight\n"
         "                    corridor; logs the sideways drift (weave.csv, weave_plot.png)\n"
         "  --step-hz N       weave: game steps per second (default 100, the window's typical rate)\n"
@@ -82,13 +90,14 @@ std::optional<Options> parseCommandLine(int argc, char** argv, std::string& erro
             o.mode = Options::Mode::Help;
         } else if (a == "--check") {
             o.mode = Options::Mode::Check;
-        } else if (a == "--capture" || a == "--overhead" || a == "--shots" || a == "--bench") {
+        } else if (a == "--capture" || a == "--overhead" || a == "--shots" || a == "--bench" || a == "--encounters") {
             auto v = value();
             if (!v) return std::nullopt;
-            o.mode = a == "--capture" ? Options::Mode::Capture
-                     : a == "--shots" ? Options::Mode::Shots
-                     : a == "--bench" ? Options::Mode::Bench
-                                      : Options::Mode::Overhead;
+            o.mode = a == "--capture"      ? Options::Mode::Capture
+                     : a == "--shots"      ? Options::Mode::Shots
+                     : a == "--bench"      ? Options::Mode::Bench
+                     : a == "--encounters" ? Options::Mode::Encounters
+                                           : Options::Mode::Overhead;
             o.output = std::filesystem::path(std::string(*v));
         } else if (a == "--scene") {
             auto v = value();
@@ -126,8 +135,25 @@ std::optional<Options> parseCommandLine(int argc, char** argv, std::string& erro
             auto v = value();
             int n = 0;
             if (!v) return std::nullopt;
-            if (!parseNumber(*v, n) || n < 0 || n > 8) return bad(*v);
+            if (!parseNumber(*v, n) || n < 0 || n > 24) return bad(*v);
             o.creatures = n;
+        } else if (a == "--hunt") {
+            auto v = value();
+            if (!v) return std::nullopt;
+            if (*v != "new" && *v != "original") return bad(*v);
+            o.hunt = std::string(*v);
+        } else if (a == "--runs") {
+            auto v = value();
+            if (!v) return std::nullopt;
+            if (!parsePair(*v, o.encounterSeeds, o.encounterVariants) || o.encounterSeeds < 1 ||
+                o.encounterVariants < 1 || o.encounterSeeds * o.encounterVariants > 400)
+                return bad(*v);
+        } else if (a == "--minutes") {
+            auto v = value();
+            float f = 0;
+            if (!v) return std::nullopt;
+            if (!parseNumber(*v, f) || f <= 0.0f || f > 60.0f) return bad(*v);
+            o.minutes = f;
         } else if (a == "--frames" || a == "--fps" || a == "--cell-px" || a == "--spp") {
             auto v = value();
             int n = 0;
@@ -154,6 +180,8 @@ std::optional<Options> parseCommandLine(int argc, char** argv, std::string& erro
             else return bad(*v);
             if (a == "--rt") o.rayTracing = on;
             else o.flashlight = on;
+        } else if (a == "--sweep") {
+            o.sweep = true;
         } else if (a == "--no-hud") {
             o.hud = false;
         } else if (a == "--debug") {

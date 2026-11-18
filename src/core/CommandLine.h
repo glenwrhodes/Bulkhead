@@ -8,7 +8,7 @@
 namespace bh {
 
 struct Options {
-    enum class Mode { Interactive, Capture, Shots, Bench, Overhead, Check, Help };
+    enum class Mode { Interactive, Capture, Shots, Bench, Overhead, Check, Encounters, Help };
     Mode mode = Mode::Interactive;
 
     std::filesystem::path output;  // capture/shots folder or overhead PNG
@@ -26,7 +26,12 @@ struct Options {
     bool rayTracing = true;
     bool hud = true;
     bool flashlight = true;
-    int creatures = 3;             // window: creatures loose in the ship
+    int creatures = -1;            // window: creatures loose in the ship (-1: the game's default)
+    std::string hunt = "new";      // how creatures find you: "new" (round 11) or "original" (before it)
+    int encounterSeeds = 10;       // --encounters: ships x runs on each
+    int encounterVariants = 3;
+    float minutes = 10.0f;         // --encounters: each run's length
+    bool sweep = false;            // --encounters: try a grid of tunings (count, drift, hearing)
     int stepHz = 100;              // weave capture: game steps per second
     std::string scene = "walk";    // capture: "walk" (start -> exit), "fire" (six shots), "crawl" (the creature)
     float haze = 1.0f;             // haze density multiplier

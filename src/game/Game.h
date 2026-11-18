@@ -77,6 +77,7 @@ public:
     // Advances the doors toward open/closed given the camera position.
     void updateDoors(float dt);
     void openDoorsNear(Vec3 p, float radius);  // snaps doors open (for still shots)
+    const std::vector<float>& doorOpen() const { return doorOpen_; }  // per Level door, 0 shut .. 1 open
 
     const Camera& camera() const { return camera_; }
     bool reachedExit() const;
@@ -134,10 +135,24 @@ public:
     // ---- hunters (rounds 9-10) ----
     // Puts `count` creatures loose in the ship, in the dim, dark and derelict sections
     // away from the player. They roam, stalk, chase, leap and kill; four hits kill one.
-    void spawnHunters(int count);
+    // `salt` varies where they start (0: the window's choice); restarts keep it.
+    void spawnHunters(int count, uint64_t salt = 0);
     const std::vector<Hunter>& hunters() const { return hunters_; }
     // Advances everything but the player: doors, lights, hunters, effects, the death scene.
     void stepWorld(float dt);
+    // Puts the player's eye somewhere without the window's movement code (the encounter
+    // timer's simulated player). stepWorld then reveals the map around it.
+    void movePlayer(const Camera& c);
+    // Benchmarks: the creatures hunt the scripted walk but can never grab it (a leap that
+    // reaches you lands and comes again). stepCreatures steps only them and their lights,
+    // so setWalkTime keeps the clock.
+    void setInvulnerable(bool on) { invulnerable_ = on; }
+    void stepCreatures(float dt);
+    // How the creatures find the player (round 11); see HuntTuning.
+    void setHuntTuning(const HuntTuning& t) { tuning_ = t; }
+    const HuntTuning& huntTuning() const { return tuning_; }
+    // How much noise the player makes: 0 still, 1 walking, 2 running (window: from the keys).
+    void setPlayerNoise(int n) { noise_ = n; }
     // The player's death: a hunter has you. 0 alive; seconds since it grabbed you.
     bool playerDead() const { return deathT_ >= 0.0f; }
     float deathTime() const { return deathT_; }
@@ -240,6 +255,13 @@ private:
     // hunters and the player's death
     std::vector<Hunter> hunters_;
     int huntersWanted_ = 0;
+    uint64_t spawnSalt_ = 0;
+    bool invulnerable_ = false;
+    HuntTuning tuning_;
+    int noise_ = 0;
+    std::vector<int> playerDist_;  // walking distance (cells) from the player's cell, for hearing
+    Int2 playerDistFrom_{-1, -1};
+    void stepHunters(float dt);
     std::vector<float> respawnAt_;
     float deathT_ = -1.0f;
     int killer_ = -1;
