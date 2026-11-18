@@ -280,6 +280,71 @@ def spine_ridge(b, ys, z_top, h0, h1):
         b.face([pc_, pd, tip], 'Bone', toward=V3(0, -1, 0.3))
 
 
+def plated_limb(b, pts, radii, up, n_plates=3, flat=0.78, tendons=2, spines=0):
+    """A heavy biomechanical limb along a curve: a sinew core, overlapping armour
+    sleeves that flare at their lower ends with bone lips and a glowing gap, tendon
+    conduits clamped along the outside, and optional spines down its back."""
+    pts = [Vector(p) for p in pts]
+    n = len(pts) - 1
+    curve_loft(b, pts, [r * 0.82 for r in radii], 'Sinew', up=up, flat=flat)
+    for k in range(n_plates):
+        i0 = int(round(k * n / n_plates))
+        i1 = min(n, int(round((k + 1) * n / n_plates)) + 1)
+        seg = pts[i0:i1 + 1]
+        rr = [radii[min(i, len(radii) - 1)] * (1.0 + 0.32 * (j / max(1, len(seg) - 1)))
+              for j, i in enumerate(range(i0, i1 + 1))]
+        curve_loft(b, seg, rr, 'Chitin', up=up, flat=flat)
+        d = (seg[-1] - seg[-2]).normalized()
+        b.ring(seg[-1], d, rr[-1] * 0.98, 0.0055, 'Bone', seg=14, tseg=4)
+        b.ring(seg[-1] + d * 0.012, d, rr[-1] * 0.78, 0.0045, 'CreatureGlow', seg=14, tseg=4)
+    # tendons: bundles of armoured cable along the outside, clamped every few cm
+    for t in range(tendons):
+        ang = 2.0 + t * 1.1
+        tp = []
+        for i, p in enumerate(pts):
+            a = pts[max(0, i - 1)]
+            c = pts[min(n, i + 1)]
+            d = (c - a).normalized()
+            side = d.cross(up).normalized()
+            top = side.cross(d).normalized()
+            off = (side * math.cos(ang) * flat + top * math.sin(ang)) * radii[min(i, len(radii) - 1)] * 1.18
+            tp.append(p + off)
+        conduit(b, tp, radii[0] * 0.2, rings_every=0.06)
+    for k in range(spines):
+        i = 1 + int(k * (n - 1) / max(1, spines))
+        p = pts[i]
+        d = (pts[i + 1] - p).normalized()
+        side = d.cross(up).normalized()
+        top = side.cross(d).normalized()
+        base = p + top * radii[i] * 1.25
+        spike(b, base, base + top * (radii[i] * 0.9 + 0.012) - d * 0.03, radii[i] * 0.28, 'Bone', seg=6)
+
+
+def dorsal_detail(b, prof, z_of, y0, y1, steps=10):
+    """Giger-style surface over the back: paired dorsal conduits either side of the
+    spine fins, transverse bone ribbing across the plates, and short flank pipes."""
+    ys = [y0 + (y1 - y0) * i / steps for i in range(steps + 1)]
+    for s in (-1, 1):
+        for a_off, r in ((0.42, 0.011), (0.72, 0.008)):
+            pts = []
+            for y in ys:
+                w, h = prof(y)
+                a = math.pi / 2 - s * a_off
+                pts.append(V3(math.cos(a) * (w + 0.046), y, z_of(y) + math.sin(a) * (h + 0.046)))
+            conduit(b, pts, r, rings_every=0.05)
+    # thin bone ribs arching over the back, between the conduits
+    for y in ys[1:-1]:
+        w, h = prof(y)
+        arc = ring(V3(0, y, z_of(y)), V3(1, 0, 0), V3(0, 0, 1), w + 0.042, h + 0.042, e=0.75, n=10,
+                   a0=0.55, a1=math.pi - 0.55, closed=False)
+        b.tube(arc, 0.0045, 'Bone', seg=6)
+    # a row of little bone nodules along each flank, like rivets grown into bone
+    for s in (-1, 1):
+        for y in ys[1:-1]:
+            w, h = prof(y)
+            sphere(b, V3(s * (w + 0.008), y, z_of(y) + h * 0.35), 0.008, 'Bone', seg=8, rings=4)
+
+
 def conduit(b, pts, r, mat='Sinew', ring_mat='Bone', rings_every=0.07):
     """Tendon like armoured cable: a tube with bone clamp rings."""
     b.tube(pts, r, mat, seg=10)
@@ -316,6 +381,7 @@ def build_parts():
                                (-0.27, 0.175, 0.13), (-0.14, 0.14, 0.115), (-0.07, 0.09, 0.085)], z_p,
                         [(-0.58, -0.42), (-0.45, -0.29), (-0.32, -0.16), (-0.19, -0.07)])
     spine_ridge(b, [-0.55 + 0.06 * i for i in range(8)], lambda y: z_p(y) + prof(y)[1] + 0.02, 0.03, 0.06)
+    dorsal_detail(b, prof, z_p, -0.56, -0.1)
     for s in (-1, 1):  # flank conduits
         conduit(b, [V3(s * 0.15, -0.52, 0.47), V3(s * 0.185, -0.36, 0.49), V3(s * 0.17, -0.2, 0.49),
                     V3(s * 0.12, -0.08, 0.47)], 0.014)
@@ -348,6 +414,7 @@ def build_parts():
                                (0.6, 0.11, 0.1), (0.67, 0.07, 0.07)], z_t,
                         [(0.14, 0.27), (0.25, 0.4), (0.37, 0.52), (0.49, 0.64)])
     spine_ridge(b, [0.16 + 0.065 * i for i in range(8)], lambda y: z_t(y) + prof(y)[1] + 0.02, 0.035, 0.075)
+    dorsal_detail(b, prof, z_t, 0.16, 0.63)
     for s in (-1, 1):
         conduit(b, [V3(s * 0.11, 0.16, 0.48), V3(s * 0.17, 0.3, 0.5), V3(s * 0.16, 0.46, 0.51), V3(s * 0.09, 0.62, 0.52)],
                 0.014)
@@ -400,6 +467,24 @@ def build_parts():
             a, c = seam[i], seam[i + 1]
             b.face([a, c, c + V3(0, -0.01, -0.004), a + V3(0, -0.01, -0.004)], 'CreatureGlow',
                    toward=a - V3(0, a.y, head_axis_z(y1)))
+    # ribbing over the skull: longitudinal bone ridges following the crown, and armoured
+    # conduits from the cheeks back into the neck
+    for xo in (-0.06, -0.03, 0.0, 0.03, 0.06):
+        pts = []
+        for i in range(9):
+            y = 0.76 + (1.03 - 0.76) * i / 8
+            w, h = hprof(y)
+            if abs(xo) > w * 0.85:
+                continue
+            zz = (h + 0.045) * math.sqrt(max(0.0, 1.0 - (xo / (w + 0.05)) ** 2)) + 0.012 - 0.02 * (y - 0.76) / 0.27
+            pts.append(V3(xo * (1.0 - 0.35 * (y - 0.76) / 0.27), y, head_axis_z(y) + zz))
+        if len(pts) > 2:
+            b.tube(pts, 0.0042 if xo else 0.0065, 'Bone', seg=6)
+    for s in (-1, 1):
+        conduit(b, [V3(s * 0.07, 1.02, head_axis_z(1.02) - 0.02), V3(s * 0.12, 0.9, head_axis_z(0.9) - 0.02),
+                    V3(s * 0.13, 0.8, head_axis_z(0.8)), V3(s * 0.09, 0.7, 0.53)], 0.009, rings_every=0.04)
+        conduit(b, [V3(s * 0.05, 1.0, head_axis_z(1.0) - 0.035), V3(s * 0.09, 0.86, head_axis_z(0.86) - 0.045),
+                    V3(s * 0.07, 0.72, 0.5)], 0.007, rings_every=0.04)
     # swept-back crest spikes behind the crown, over the neck
     for s in (-1, 0, 1):
         base = V3(s * 0.07, 0.75, head_axis_z(0.75) + 0.06 - abs(s) * 0.02)
@@ -410,8 +495,10 @@ def build_parts():
                 V3(s * 0.058, 1.05, head_axis_z(1.05) - 0.008)], 0.008, 'Bone', seg=8)
     # the throat: a glowing amber hollow behind the jaws, ringed with dark gums
     thc = V3(0, JAW_BASE_Y - 0.01, head_axis_z(JAW_BASE_Y))
-    b.cyl(thc + V3(0, -0.03, 0), thc, 0.038, 'Sinew', seg=16, caps=(False, False))
-    b.cyl(thc + V3(0, -0.032, 0), thc + V3(0, -0.03, 0), 0.036, 'CreatureGlow', seg=16, caps=(True, False))
+    b.cyl(thc + V3(0, -0.03, 0), thc, 0.04, 'Sinew', seg=16, caps=(False, False))
+    b.cyl(thc + V3(0, -0.032, 0), thc + V3(0, -0.03, 0), 0.038, 'CreatureGlow', seg=16, caps=(True, False))
+    # a glowing ring at the root of the jaws, seen through the gaps between the petals
+    b.ring(thc + V3(0, 0.004, 0), V3(0, 1, 0), 0.046, 0.007, 'CreatureGlow', seg=20, tseg=6)
     for k in range(10):  # an inner ring of teeth in the throat
         a = k * 2 * math.pi / 10
         d = V3(math.cos(a), 0, math.sin(a))
@@ -505,20 +592,17 @@ def build_parts():
         s = 1 if leg.endswith('R') else -1
         b = part('femur_' + leg, bevel=0.0018)
         up = V3(0, 0, 1)
-        side, top = tube_loft(b, hip, knee, [(0.0, 0.03), (0.12, 0.038), (0.5, 0.033), (0.85, 0.027), (1.0, 0.024)],
-                              'ChitinMatte', e=0.8, up=up, flat=0.75)
-        # two overlapping armour sleeves, each flaring at its lower end with a bone lip
-        for t0, t1 in ((0.06, 0.5), (0.44, 0.9)):
-            a, c = hip + (knee - hip) * t0, hip + (knee - hip) * t1
-            tube_loft(b, a, c, [(0.0, 0.034), (0.25, 0.042), (0.8, 0.046), (1.0, 0.04)], 'Chitin', e=0.75, up=up,
-                      flat=0.78)
-            b.ring(c, (knee - hip).normalized(), 0.04, 0.004, 'Bone', seg=12, tseg=4)
-        # tendon conduit under the femur
-        conduit(b, [hip - top * 0.025, (hip + knee) * 0.5 - top * 0.045, knee - top * 0.025], 0.008,
-                rings_every=0.08)
-        sphere(b, knee, 0.03, 'ChitinMatte', seg=12, rings=6)  # knee
-        spike(b, knee + top * 0.015, knee + top * 0.015 + (knee - hip).normalized() * 0.09 + V3(0, 0, 0.05), 0.016,
-              'Bone')
+        d = (knee - hip).normalized()
+        side = d.cross(up).normalized()
+        top = side.cross(d).normalized()
+        # a heavy thigh: plated, slightly bowed upward, tapering to the knee
+        fpts = bezier(hip, knee, (hip + knee) * 0.5 + top * 0.04, 8)
+        fr = [0.058 - 0.022 * (i / 8) for i in range(9)]
+        plated_limb(b, fpts, fr, up, n_plates=3, flat=0.8, tendons=2, spines=3)
+        # the knee: a bone knuckle with a long backswept spike
+        sphere(b, knee, 0.042, 'Chitin', seg=14, rings=7)
+        b.ring(knee, d, 0.04, 0.007, 'Bone', seg=14, tseg=5)
+        spike(b, knee + top * 0.02, knee + top * 0.02 + d * 0.1 + V3(0, 0, 0.06), 0.02, 'Bone')
         markers.append(('bone_femur_' + leg, hip, (knee - hip).normalized()))
 
         b = part('tibia_' + leg, bevel=0.0015)
@@ -527,12 +611,8 @@ def build_parts():
         # joint collar between them
         ctrl = (knee + claw_base) * 0.5 + V3(s * 0.1, 0, 0.07)
         curve = bezier(knee, claw_base, ctrl, 12)
-        radii = [0.032 * (1 - 0.62 * (i / 12) ** 0.8) for i in range(13)]
-        curve_loft(b, curve[:7], [r * 1.12 for r in radii[:7]], 'Chitin', up=V3(s, 0, 0), flat=0.7)
-        curve_loft(b, curve[6:], [r * 1.05 for r in radii[6:]], 'Chitin', up=V3(s, 0, 0), flat=0.7)
-        b.ring(curve[6], (curve[7] - curve[5]).normalized(), radii[6] * 1.25, 0.006, 'Bone', seg=12, tseg=4)
-        b.ring(curve[6] + (curve[7] - curve[6]) * 0.3, (curve[7] - curve[5]).normalized(), radii[6] * 0.95, 0.0035,
-               'CreatureGlow', seg=12, tseg=4)
+        radii = [0.046 * (1 - 0.6 * (i / 12) ** 0.85) for i in range(13)]
+        plated_limb(b, curve, radii, V3(s, 0, 0), n_plates=4, flat=0.72, tendons=1, spines=0)
         # serrated spikes down the back edge
         for k in range(7):  # serrated spikes along the outer edge
             i = 1 + k
@@ -555,14 +635,10 @@ def build_parts():
     for side, (sh, el, wr, hk) in ARMS.items():
         s = 1 if side == 'R' else -1
         b = part('arm_' + side, bevel=0.0018)
-        # a heavy plated upper arm: core, two shingled guards, spines along the top
-        tube_loft(b, sh, el, [(0.0, 0.034), (0.2, 0.045), (0.8, 0.04), (1.0, 0.032)], 'ChitinMatte', e=0.75,
-                  up=V3(s, 0, 0), flat=0.75)
-        for t0, t1 in ((0.05, 0.55), (0.48, 0.97)):
-            a, c = sh + (el - sh) * t0, sh + (el - sh) * t1
-            tube_loft(b, a, c, [(0.0, 0.04), (0.3, 0.052), (1.0, 0.046)], 'Chitin', e=0.72, up=V3(s, 0, 0),
-                      flat=0.8)
-            b.ring(c, (el - sh).normalized(), 0.044, 0.004, 'Bone', seg=12, tseg=4)
+        # a heavy plated upper arm with tendons and spines along the top
+        apts = bezier(sh, el, (sh + el) * 0.5 + V3(s * 0.03, 0.02, 0.0), 8)
+        plated_limb(b, apts, [0.06 - 0.016 * (i / 8) for i in range(9)], V3(s, 0, 0), n_plates=3, flat=0.8,
+                    tendons=2, spines=0)
         for k in range(4):
             t = 0.2 + k * 0.2
             p = sh + (el - sh) * t + V3(s * 0.025, 0, 0.03)
@@ -577,7 +653,9 @@ def build_parts():
 
         b = part('fore_' + side, bevel=0.0015)
         # the forearm is a flat blade folded back under the upper arm, serrated inside
-        tube_loft(b, el, wr, [(0.0, 0.032), (0.3, 0.038), (1.0, 0.024)], 'Chitin', e=0.65, up=V3(s, 0, 0), flat=0.5)
+        tube_loft(b, el, wr, [(0.0, 0.042), (0.3, 0.05), (1.0, 0.03)], 'Chitin', e=0.65, up=V3(s, 0, 0), flat=0.55)
+        conduit(b, [el + V3(s * 0.03, 0, 0.0), (el + wr) * 0.5 + V3(s * 0.035, 0, 0.0), wr + V3(s * 0.022, 0, 0)],
+                0.008, rings_every=0.05)
         for k in range(6):  # a comb of spines on the inside edge
             t = 0.15 + k * 0.13
             p = el + (wr - el) * t

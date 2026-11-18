@@ -512,6 +512,99 @@ void testCreature() {
     std::printf("  crawl scene corridor by seed:%s\n", moods.c_str());
 }
 
+// Rounds 9-10: hunters. They spawn away from you, roam without falling off the world, and
+// the two filmed scenes play out as written: the hunt ends with the player dead, the
+// fight with the creature dead after exactly four hits.
+void testHunters() {
+    MazeParams p;
+    p.width = p.height = 40;
+    p.seed = 1234;
+    {
+        Game game(g_kit, p);
+        game.spawnHunters(3);
+        CHECK(game.hunters().size() == 3);
+        const std::vector<int> dist = game.maze().distancesFrom(game.maze().startCell());
+        for (const Hunter& h : game.hunters()) {
+            const Int2 c = h.cell();
+            CHECK(game.maze().inBounds(c) && dist[size_t(c.y * 40 + c.x)] >= 10);
+        }
+        // a minute of the player standing at the spawn: they roam, stay inside the ship
+        game.update(1.0f / 30.0f, InputState{});  // poses them
+        std::vector<Vec3> start;
+        for (const Hunter& h : game.hunters()) start.push_back(h.bodyCenter());
+        bool finite = true, inside = true;
+        float maxJump = 0.0f;
+        std::vector<Vec3> prev = start;
+        for (int i = 0; i < 60 * 30; ++i) {
+            game.update(1.0f / 30.0f, InputState{});
+            for (size_t k = 0; k < game.hunters().size(); ++k) {
+                const Hunter& h = game.hunters()[k];
+                const Vec3 b = h.bodyCenter();
+                const float jump = length(b - prev[k]);
+                if (jump > 0.5f && i > 0)
+                    std::printf("    jump %.2f m: hunter %zu t %.2f state %s\n", jump, k, i / 30.0f, toString(h.state()));
+                if (i > 0) maxJump = std::max(maxJump, jump);
+                prev[k] = b;
+                finite = finite && std::isfinite(b.x) && std::isfinite(b.y) && std::isfinite(b.z);
+                inside = inside && b.y > 0.0f && b.y < 3.0f && game.maze().kind(h.cell()) != CellKind::Void;
+            }
+        }
+        float moved = 0.0f;
+        for (size_t i = 0; i < start.size(); ++i) moved = std::max(moved, length(game.hunters()[i].bodyCenter() - start[i]));
+        std::printf("  3 hunters, 60 s: furthest moved %.1f m; states %s %s %s\n", moved,
+                    toString(game.hunters()[0].state()), toString(game.hunters()[1].state()),
+                    toString(game.hunters()[2].state()));
+        CHECK(finite && inside);
+        CHECK(moved > 5.0f);
+        CHECK_MSG(maxJump < 0.4f, std::format("a hunter jumped {:.2f} m in one step", maxJump));
+    }
+    for (bool fight : {false, true}) {
+        Game game(g_kit, p);
+        CHECK(game.setupHuntScene(fight));
+        std::string seq;
+        HunterState last = HunterState::Dead;
+        float t = 0.0f;
+        const float dt = 1.0f / 30.0f;
+        for (; t < game.huntSceneLength() && !game.huntSceneDone(t); t += dt) {
+            game.stepHuntScene(t, dt);
+            const HunterState s = game.hunters()[0].state();
+            if (s != last) {
+                seq += std::format(" {}@{:.1f}", toString(s), t);
+                last = s;
+            }
+        }
+        const Hunter& h = game.hunters()[0];
+        std::printf("  %s scene: %.1f s,%s; hp %d, shots %d, player %s\n", fight ? "fight" : "hunt", t, seq.c_str(),
+                    h.health(), game.shotsFired(), game.playerDead() ? "dead" : "alive");
+        if (fight) {
+            CHECK_MSG(!h.alive() && !game.playerDead(), "fight: the creature should die, the player live");
+            CHECK(h.health() == 0 && game.kills() == 1);
+        } else {
+            CHECK_MSG(game.playerDead(), "hunt: the player should die");
+            CHECK(seq.find("stalk") != std::string::npos && seq.find("chase") != std::string::npos &&
+                  seq.find("leap") != std::string::npos && seq.find("feed") != std::string::npos);
+            CHECK(h.health() < Hunter::kHealth && h.alive());  // hit, and still came on
+            CHECK(game.redout() > 0.9f);
+        }
+    }
+    // three hits do not kill; the fourth does
+    {
+        Game game(g_kit, p);
+        game.spawnHunters(1);
+        Hunter h = game.hunters()[0];
+        HuntWorld w;
+        w.maze = &game.maze();
+        w.level = &game.level();
+        std::vector<float> doors(game.level().doors.size(), 0.0f);
+        w.doorOpen = &doors;
+        w.player = game.camera().position;
+        for (int i = 0; i < 3; ++i) h.hit(w);
+        CHECK(h.alive() && h.health() == 1);
+        h.hit(w);
+        CHECK(!h.alive());
+    }
+}
+
 void testCollision() {
     Collision c;
     c.add({0, 0, 1, 1});
@@ -544,7 +637,8 @@ int main(int argc, char** argv) {
                           {"doors", testDoors}, {"game", testGame}, {"camera bob", testBob},
                           {"sections, lights, map, flashlight (40x40)", testMood},
                           {"derelict pieces, crouching, effects, firing (40x40)", testDerelictAndGun},
-                          {"creature: parts, crawl surface, gait, IK", testCreature}};
+                          {"creature: parts, crawl surface, gait, IK", testCreature},
+                          {"hunters: roaming, the hunt, the fight, four hits", testHunters}};
     for (const Test& t : tests) {
         const int before = g_failures;
         std::printf("[ RUN  ] %s\n", t.name);

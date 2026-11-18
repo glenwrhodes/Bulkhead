@@ -68,6 +68,11 @@ milestone status are in `docs/PLAN.md`; update that table when a milestone lands
   (`src/world/CrawlSurface.*`). Its Blender rig (`CREATURE_RIG`) is for renders only;
   the engine reads the rest pivots from the `fx_bone_*` markers. Creature render
   lighting: `bk_studio.creature_lights()`; black glossy armour only reads by its rim light.
+- Hunters (`src/game/Hunter.*`) are stepped by `Game::stepWorld`. Only the window
+  (`--creatures`) and the hunt/fight scenes spawn them; the walk, fire, shots and bench
+  captures have none. They re-route only at cell centres; never let a path change move
+  the creature (level_tests checks a 0.4 m-per-step limit).
+- capture_check rejects flat frames, so a scene must not end on a solid black fade.
 - Never mirror a basis in `Mat4::basis` (X × Y must equal Z). A mirrored instance flips
   the winding, and back-face culling hides it. If a run is
   stopped, its `Bulkhead.exe` can keep running and lock the exe for the next build:

@@ -73,6 +73,7 @@ add_library(bulkhead_lib STATIC
   src/world/CrawlSurface.cpp src/world/CrawlSurface.h
   src/game/Game.cpp        src/game/Game.h
   src/game/Creature.cpp    src/game/Creature.h
+  src/game/Hunter.cpp      src/game/Hunter.h
   src/game/Effects.h)
 target_include_directories(bulkhead_lib PUBLIC src)
 target_link_libraries(bulkhead_lib PUBLIC bh_stb bh_cgltf)

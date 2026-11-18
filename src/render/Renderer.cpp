@@ -822,6 +822,8 @@ void Renderer::recordScene(const std::vector<SceneInstance>& instances, const Fr
     pc.p2[3] = s.minimap ? 1.0f : 0.0f;
     // stronger in the window (1 sample per frame), gentle on converged captures
     pc.p3[0] = samples > 1 ? 2.5f : 1.6f;
+    pc.p3[1] = s.redout;
+    pc.p3[2] = s.blackout;
     // map grid: margin and cell size as fractions of the map image
     const bool grid = mapCellPx_ > 0;
     pc.p4[0] = grid ? float(mapMarginPx_) / float(mapWidth_) : 0.0f;
@@ -883,7 +885,10 @@ Image Renderer::renderToImage(const std::vector<SceneInstance>& instances, const
 
     Image img{int(width_), int(height_)};
     void* mappedVoid = nullptr;
-    const D3D12_RANGE readRange{0, size_t(readbackFootprint_.Footprint.RowPitch) * height_};
+    // the last row is not padded to the row pitch
+    const D3D12_RANGE readRange{0, size_t(readbackFootprint_.Offset) +
+                                       size_t(readbackFootprint_.Footprint.RowPitch) * (height_ - 1) +
+                                       size_t(width_) * 4};
     BH_CHECK(readback_->Map(0, &readRange, &mappedVoid));
     const uint8_t* mapped = static_cast<const uint8_t*>(mappedVoid);
     for (uint32_t y = 0; y < height_; ++y)

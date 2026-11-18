@@ -6,7 +6,7 @@ cbuffer Present : register(b0)
     float4 p0;  // x exposure, y hud (1 = on), z time, w exit flash 0..1
     float4 p1;  // x width, y height, z map aspect (w / h), w big map opacity
     float4 p2;  // x player map u, y player map v, z player yaw, w minimap on
-    float4 p3;  // x despeckle k (0 = off)
+    float4 p3;  // x despeckle k (0 = off), y redout, z blackout
     float4 p4;  // map grid: x,y margin (uv), z,w one cell (uv)
     float4 p5;  // x grid w, y grid h, z hide unexplored (1 = on), w minimap half-width in cells (0 = whole map)
 };
@@ -150,6 +150,18 @@ float4 PSMain(VSOut input) : SV_Target
 
     // exit reached: fade toward white
     col = lerp(col, float3(1.0, 1.0, 1.0), p0.w * 0.55);
+
+    // dying: red closes in from the edges and drains the colour, then black
+    if (p3.y > 0.0)
+    {
+        float2 q = (px / res - 0.5) * float2(res.x / res.y, 1.0);
+        float edge = smoothstep(0.85 - 0.75 * p3.y, 1.05 - 0.3 * p3.y, length(q) * 1.25);
+        float luma = dot(col, float3(0.2126, 0.7152, 0.0722));
+        float3 bled = float3(luma * 1.1 + 0.05, luma * 0.12, luma * 0.08);
+        col = lerp(col, bled, saturate(p3.y * 0.8));
+        col = lerp(col, float3(0.22, 0.0, 0.0), edge * saturate(p3.y * 1.2));
+    }
+    col *= 1.0 - p3.z;
 
     if (p0.y > 0.5)
     {

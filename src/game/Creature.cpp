@@ -22,6 +22,8 @@ Mat4 inverseRigid(const Mat4& m) {
     return r;
 }
 
+Vec3 column(const Mat4& m, int c);
+
 Mat4 axisAngle(Vec3 a, float ang) {
     a = normalize(a);
     const float c = std::cos(ang), s = std::sin(ang), t = 1.0f - c;
@@ -97,7 +99,178 @@ Creature::Creature(const Kit& kit) {
             }
         if (!found) return;
     }
+    // hit spheres: along the body chain, the head and jaws, and each leg segment
+    auto piv = [&](const char* n) { return bones_[size_t(find(n))].pivot; };
+    auto add = [&](const char* bone, Vec3 c, float r) { hits_.push_back({find(bone), c, r}); };
+    const char* chain[] = {"pelvis", "waist", "thorax", "neck", "head"};
+    const float radius[] = {0.19f, 0.12f, 0.19f, 0.1f, 0.13f};
+    for (int i = 0; i < 5; ++i) {
+        add(chain[i], piv(chain[i]), radius[i]);
+        if (i < 4) add(chain[i], (piv(chain[i]) + piv(chain[i + 1])) * 0.5f, radius[i]);
+    }
+    add("pelvis", piv("pelvis") + Vec3{0, 0, 0.18f}, 0.17f);
+    add("head", piv("head") + Vec3{0, -0.02f, -0.22f}, 0.1f);
+    add("head", piv("head") + Vec3{0, -0.03f, -0.38f}, 0.08f);
+    for (int k = 0; k < 3; ++k) add(("tail" + std::to_string(k)).c_str(), piv(("tail" + std::to_string(k)).c_str()), 0.08f);
+    for (int l = 0; l < 4; ++l) {
+        const std::string f = std::string("femur_") + kLegNames[l], t = std::string("tibia_") + kLegNames[l];
+        add(f.c_str(), (piv(f.c_str()) + piv(t.c_str())) * 0.5f, 0.07f);
+        add(t.c_str(), piv(t.c_str()) * 0.6f + restFoot_[size_t(l)] * 0.4f, 0.06f);
+    }
     valid_ = true;
+}
+
+namespace {
+// Blend two rigid frames (position lerp, axes lerp re-orthonormalised).
+Mat4 lerpFrame(const Mat4& a, const Mat4& b, float t) {
+    Vec3 x = normalize(lerp(column(a, 0), column(b, 0), t));
+    Vec3 y = lerp(column(a, 1), column(b, 1), t);
+    y = normalize(y - x * dot(y, x));
+    Vec3 z = cross(x, y);
+    return Mat4::basis(x, y, z, lerp(column(a, 3), column(b, 3), t));
+}
+}  // namespace
+
+std::vector<Mat4> Creature::localPose(float jaw, float arms, float legs, float tailCurl, float time) const {
+    std::vector<Mat4> local(bones_.size());
+    for (size_t i = 0; i < bones_.size(); ++i) local[i] = Mat4::identity();
+    auto about = [](Vec3 pivot, const Mat4& r) { return Mat4::translation(pivot) * r * Mat4::translation(-pivot); };
+    auto idx = [&](const std::string& n) { return size_t(find(n)); };
+    for (int j = 0; j < 4; ++j) {
+        Vec3 axis = cross(Vec3{0, 0, -1}, kJawRadial[j]);
+        local[idx(kJaws[j])] = about(bones_[idx(kJaws[j])].pivot, axisAngle(axis, 0.6f * jaw));
+    }
+    for (const char* side : {"L", "R"}) {
+        const float sgn = side[0] == 'L' ? -1.0f : 1.0f;
+        const size_t a = idx(std::string("arm_") + side);
+        // raise the scythes: up and outward
+        Mat4 r = about(bones_[a].pivot, Mat4::rotationX(0.9f * arms) * Mat4::rotationZ(-0.35f * arms * sgn));
+        local[a] = r;
+        local[idx(std::string("fore_") + side)] = r;
+    }
+    for (int l = 0; l < 4; ++l) {
+        const float sgn = kLegNames[l][1] == 'R' ? 1.0f : -1.0f;
+        const size_t f = idx(std::string("femur_") + kLegNames[l]), t = idx(std::string("tibia_") + kLegNames[l]);
+        const float tw = 0.12f * std::sin(time * 13.0f + float(l) * 1.7f) * std::max(0.0f, legs);
+        Mat4 rf, rt;
+        if (legs >= 0.0f) {  // curl in under the belly
+            // femurs swing down past the horizontal; the lower legs then point in under the
+            // belly (on its back: legs folded up over it, like a dead insect)
+            rf = about(bones_[f].pivot, Mat4::rotationZ(-sgn * (1.85f * legs + tw)));
+            rt = about(bones_[t].pivot, Mat4::rotationZ(-sgn * 0.45f * legs));
+        } else {             // thrown forward, claws reaching
+            const float k = -legs;
+            const float fwdSwing = kLegNames[l][0] == 'M' ? 0.7f : 0.35f;
+            rf = about(bones_[f].pivot, Mat4::rotationX(-fwdSwing * k) * Mat4::rotationZ(sgn * 0.25f * k));
+            rt = about(bones_[t].pivot, Mat4::rotationZ(sgn * 0.35f * k));
+        }
+        local[f] = rf;
+        local[t] = rf * rt;
+    }
+    Mat4 acc = Mat4::identity();
+    for (int k = 0; k < 6; ++k) {
+        const size_t i = idx("tail" + std::to_string(k));
+        acc = acc * about(bones_[i].pivot, Mat4::rotationX(tailCurl * 0.22f) *
+                                               Mat4::rotationY(0.1f * std::sin(time * 2.0f - float(k))));
+        local[i] = acc;
+    }
+    return local;
+}
+
+Vec3 Creature::restPivot(const char* bone) const {
+    const int i = find(bone);
+    return i >= 0 ? bones_[size_t(i)].pivot : Vec3{};
+}
+
+Mat4 Creature::blendFrames(const Mat4& a, const Mat4& b, float t) { return lerpFrame(a, b, t); }
+
+Mat4 Creature::bodyMatrix() const {
+    const Bone& t = bones_[size_t(find("thorax"))];
+    return t.world;
+}
+
+void Creature::updateFeet() {
+    for (int l = 0; l < 4; ++l) {
+        feet_[size_t(l)] = posedClaw(l);
+        planted_[size_t(l)] = false;
+    }
+    const Bone& h = bones_[size_t(find("head"))];
+    head_ = h.world.point(h.pivot + Vec3{0, 0, -0.42f});
+    const Bone& t = bones_[size_t(find("thorax"))];
+    center_ = t.world.point(t.pivot);
+}
+
+void Creature::poseRigid(const Mat4& body, float jaw, float glow, float arms, float legs, float time) {
+    if (!valid_) return;
+    glow_ = glow;
+    const std::vector<Mat4> local = localPose(jaw, arms, legs, -0.6f * std::abs(legs), time);
+    for (size_t i = 0; i < bones_.size(); ++i) bones_[i].world = body * local[i];
+    updateFeet();
+}
+
+void Creature::captureDeath() {
+    deathFrom_.clear();
+    for (const Bone& b : bones_) deathFrom_.push_back(b.world);
+    deathBody_ = bodyMatrix();
+}
+
+void Creature::poseDeath(float t, float time) {
+    if (!valid_ || deathFrom_.size() != bones_.size()) return;
+    const Vec3 c0 = deathBody_.point(bones_[size_t(find("thorax"))].pivot);
+    // the frame it lands in: on its back on the floor, forward kept horizontal
+    const Vec3 up0 = normalize(column(deathBody_, 1));
+    Vec3 fwd = -column(deathBody_, 2);
+    fwd = normalize(Vec3{fwd.x, 0, fwd.z});
+    // roll about forward until its up points down
+    const Vec3 side = cross(fwd, Vec3{0, 1, 0});
+    float roll = std::atan2(dot(up0, side), dot(up0, Vec3{0, 1, 0}));  // 0 when upright
+    roll = (roll >= 0.0f ? kPi : -kPi) - roll;
+    const float spasm = std::clamp(t / 0.35f, 0.0f, 1.0f);
+    const float fall = std::clamp((t - 0.3f) / 0.65f, 0.0f, 1.0f);
+    const float fallE = fall * fall;  // accelerating, like a drop
+    const float settle = std::clamp((t - 0.95f) / 0.25f, 0.0f, 1.0f);
+    const float bounce = 0.06f * std::sin(settle * kPi) * (1.0f - settle);
+    const Vec3 c1{c0.x, 0.42f, c0.z};
+    const Vec3 c = lerp(c0, c1, fallE) + Vec3{0, bounce, 0};
+    const Mat4 rot = axisAngle(fwd, roll * std::min(1.0f, fall * 1.2f));
+    // body frame now: rotate the death frame about its centre, then move the centre
+    Mat4 frame0 = deathBody_;
+    Mat4 frame = Mat4::translation(c) * rot * Mat4::translation(-c0) * frame0;
+    // shaking while it spasms
+    const float shake = (1.0f - fall) * 0.03f * std::sin(time * 47.0f);
+    frame = Mat4::translation(Vec3{0, shake, 0}) * frame;
+    const float legs = 0.2f + 0.8f * std::clamp((t - 0.2f) / 1.4f, 0.0f, 1.0f);
+    const float jaw = t < 0.4f ? 1.0f : std::max(0.25f, 1.0f - (t - 0.4f) * 0.6f);
+    const float twitch = t > 1.2f ? std::max(0.0f, 0.25f * std::sin(time * 9.0f) * std::exp(-(t - 1.2f) * 0.8f)) : 0.0f;
+    const std::vector<Mat4> local = localPose(jaw, 0.4f, legs + twitch, 1.0f * legs, time);
+    const float blend = std::clamp((t - 0.05f) / 0.3f, 0.0f, 1.0f);
+    for (size_t i = 0; i < bones_.size(); ++i) {
+        const Mat4 rigid = frame * inverseRigid(deathBody_) * deathBody_ * local[i];
+        bones_[i].world = blend < 1.0f ? lerpFrame(deathFrom_[i], rigid, blend * blend * (3.0f - 2.0f * blend)) : rigid;
+    }
+    // the glow flares as it dies, then fades out
+    glow_ = std::max(0.0f, (spasm < 1.0f ? 2.2f : 2.2f * std::exp(-(t - 0.35f) * 1.6f)));
+    updateFeet();
+}
+
+bool Creature::raycast(Vec3 o, Vec3 d, float maxDist, float& tHit, Vec3& nHit) const {
+    if (!valid_) return false;
+    bool hit = false;
+    tHit = maxDist;
+    for (const HitSphere& h : hits_) {
+        const Vec3 c = bones_[size_t(h.bone)].world.point(h.center);
+        const Vec3 oc = o - c;
+        const float b = dot(oc, d);
+        const float disc = b * b - (dot(oc, oc) - h.radius * h.radius);
+        if (disc < 0.0f) continue;
+        const float t = -b - std::sqrt(disc);
+        if (t > 0.0f && t < tHit) {
+            tHit = t;
+            nHit = normalize(o + d * t - c);
+            hit = true;
+        }
+    }
+    return hit;
 }
 
 // The frame of a body point: sOff metres ahead of the creature's origin along the path,
@@ -274,6 +447,27 @@ void Creature::pose(const CrawlPath& path, const CreaturePose& p) {
         const Vec3 n = normalize(cross(K - H, Fr - H));
         femur.world = frameAlong(H, K - H, n) * inverseRigid(frameAlong(H0, K0 - H0, n0));
         tibia.world = frameAlong(K, Fr - K, n) * inverseRigid(frameAlong(K0, F0 - K0, n0));
+    }
+
+    // a hit jolts the whole body back and the head up; the jaws snap wide
+    if (p.flinch > 0.0f) {
+        const Bone& th = bone("thorax");
+        const Vec3 c = th.world.point(th.pivot);
+        const Vec3 fwd = normalize(-th.world.dir({0, 0, 1}));
+        const Vec3 right = normalize(th.world.dir({1, 0, 0}));
+        const float f = p.flinch;
+        const Mat4 jolt = Mat4::translation(c - fwd * (0.16f * f)) * axisAngle(right, 0.3f * f) * Mat4::translation(-c);
+        for (Bone& b : bones_) b.world = jolt * b.world;
+        Bone& h = bone("head");
+        for (int j = 0; j < 4; ++j) {
+            Bone& jb = bone(kJaws[j]);
+            Vec3 axis = cross(Vec3{0, 0, -1}, kJawRadial[j]);
+            jb.world = h.world * Mat4::translation(jb.pivot) * axisAngle(axis, 0.6f * std::min(1.0f, p.jaw + f)) *
+                       Mat4::translation(-jb.pivot);
+        }
+        glow_ = p.glow + 1.2f * f;
+        head_ = h.world.point(h.pivot + Vec3{0, 0, -0.42f});
+        center_ = c;
     }
 }
 

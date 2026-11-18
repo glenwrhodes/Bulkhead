@@ -86,11 +86,11 @@ PALETTE = {
     'LightFlashMid': dict(c='ffffff', m=0.0, r=0.3, e='4fd2ff', es=9.0),   # inner petals, cyan
     'LightFlashOut': dict(c='ffffff', m=0.0, r=0.3, e='1a7bff', es=3.5),   # outer petals, deep blue
     # round 8: the creature
-    'Chitin':       dict(c='15171a', m=0.25, r=0.24),    # wet graphite black
-    'ChitinMatte':  dict(c='1d1f1f', m=0.1, r=0.5),
-    'Bone':         dict(c='6e6352', m=0.0, r=0.38),     # ridges, teeth, claws: aged dark ivory
-    'Sinew':        dict(c='2a1512', m=0.05, r=0.32),    # tendons, gums: dark, wet
-    'CreatureGlow': dict(c='ffffff', m=0.0, r=0.3, e='ff8a1e', es=9.0),  # amber seams and throat
+    'Chitin':       dict(c='15171a', m=0.4, r=0.13),     # wet graphite black
+    'ChitinMatte':  dict(c='1d1f1f', m=0.2, r=0.28),
+    'Bone':         dict(c='54493a', m=0.05, r=0.3),     # ridges, teeth, claws: aged dark ivory, waxy
+    'Sinew':        dict(c='2a1512', m=0.1, r=0.2),      # tendons, gums: dark, wet
+    'CreatureGlow': dict(c='ffffff', m=0.0, r=0.3, e='ff8a1e', es=16.0),  # amber seams and throat
 }
 
 

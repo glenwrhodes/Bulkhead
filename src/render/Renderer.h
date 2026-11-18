@@ -31,6 +31,8 @@ struct FrameSettings {
     float bigMap = 0.0f;       // 0..1 opacity of the full-screen map
     float exposure = 1.0f;
     float exitFlash = 0.0f;
+    float redout = 0.0f;       // 0..1: blood red at the edges, closing in (dying)
+    float blackout = 0.0f;     // 0..1: fade to black
     float time = 0.0f;
     Vec2 playerMapUV;          // player position on the overhead map image (0..1)
     int samples = 1;           // >1: average this many sub-frames of a still camera (capture)

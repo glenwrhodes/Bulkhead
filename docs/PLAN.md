@@ -19,8 +19,8 @@ Custom C++20 engine on DirectX 12 with DXR ray tracing (RTX 4090 Laptop GPU, ray
 | 8 | Round 7: arms holding the gun, firing (muzzle flash light, bolt, impacts, recoil) | **Done (rounds 6-7)** |
 | - | Download: GitHub Actions builds every push to master and publishes `Bulkhead-windows-x64.zip` as a release | **Done** (`.github/workflows/build.yml`, `cmake/PackageZip.cmake`, `cmake/CheckPackage.cmake`) |
 | 9 | Round 8: the creature (rigid armoured plates, Blender rig and crawl cycle), crawling on floors, walls and ceilings | **Done (round 8)**: see The creature |
-| 10 | Round 9: hunting AI, leap, player death; four hits to kill | |
-| 11 | Round 10: game loop with several creatures; full film pass | |
+| 10 | Round 9: hunting AI, leap, player death; four hits to kill | **Done (rounds 9-10)**: see Hunters |
+| 11 | Round 10: game loop with several creatures; full film pass | **Done (rounds 9-10)** |
 
 ## Maze generation (`src/world/Maze.*`)
 
@@ -150,6 +150,35 @@ Timing run after rounds 6-7: median 6.7 ms (lit 7.5, dim 7.6, derelict 5.8, dark
 **Lighting fixes this round:**
 - Fixture lights fall off as I/(d² + 0.12), and the flashlight as I/(d² + 0.35). Before, a surface brushing a light (the creature on the ceiling, the hanging panel in the flashlight) blew out to white.
 - The muzzle flash now has three layers: a white-hot core, cyan inner petals and deep-blue outer petals.
+
+## Hunters (rounds 9-10, `src/game/Hunter.*`)
+
+**The model rework** (`bk_creature.py`), for more mass and more surface:
+- **Limbs** are built by `plated_limb()`: a sinew core, three or four overlapping armour sleeves (each flaring to a bone lip with a glowing gap), armoured tendon conduits, and spines down the back. The thighs are about 1.6 times as thick as before.
+- **Back and skull:** `dorsal_detail()` adds paired dorsal conduits, transverse bone ribbing and flank nodules on the pelvis and thorax. The skull gets five bone ridges and four cheek-to-neck conduits.
+- **Materials:** the chitin is wetter (roughness 0.13, metallic 0.4) and the bone darker and waxier. The amber glow is at strength 16, and there's a glowing ring at the root of the jaws.
+- **Size:** 213k triangles in total.
+
+**AI states** (fixed steps, its own `Rng`, so captures are repeatable):
+
+| State | What it does |
+|---|---|
+| Roam | Wanders to cells 4–9 away, mostly out of lit sections, on the ceiling (50%), a wall or the floor. It avoids U-turns unless cornered. 1.1 m/s |
+| Stalk | Sees you (line of sight through the level, up to 22 m): a 1.1 s pause to hiss, then it closes in along the ceiling at 1.35 m/s, glow brightening |
+| Chase | Within 7.5 m, after 4.5 s of stalking, when hit, or when you fire within 30 m: it rushes along the ceiling at 4 m/s and drops to the floor for the last three cells, re-aiming at your cell at every cell centre |
+| Leap | Within 3.3 m with a clear line: a 0.42 s lunge at your face, scythes raised, legs thrown forward, jaws wide. If it misses, it lands and charges again |
+| Feed | It has you: the death scene |
+| Dying / Dead | Four hits: it spasms, glow flaring, falls onto its back (rolling over if it was on the floor or a wall), and curls its legs over its belly as the glow dies. The body stays |
+
+- **Surfaces:** each cell on its path gets one. Room cells and door crossings are always floor. Walls only appear in straight corridor cells; at junctions they become ceiling. The surface changes smoothly between cell centres, and the cells just behind it keep theirs when it re-routes, so a new path never jumps under it.
+- **Hits:** 18 spheres on its bones are tested against the camera ray. A hit makes it flinch for 0.35 s (it jolts back, the head pitches up, the jaws snap and the glow flares) and slows it. Hits throw amber sparks and an amber light, and leave no scorch.
+- **Light:** each hunter carries two amber lights, at the throat and above its back. In the dark it shows as a shape against its own glow.
+- **Death scene:** the camera is knocked back and down to the floor, looking up, with shaking. The creature sits on your face with its scythes raised and claws spread, biting in rhythm. Red drains the colour and closes in from the edges, then it fades to black. The window restarts the run after 4.6 s.
+- **Window play:** `--creatures N` (default 3) spawns them in non-lit sections at least 12 cells' walk from you. A dead one is replaced 30 s later, at least 14 cells away. The window title counts kills.
+- **Films:**
+  - **`--scene hunt` (`film_hunt`, seed 1234, derelict corridor):** you walk in, it stalks on the ceiling, you back off and hit it twice, it charges, leaps, and you die. The scene ends 3 s into the fade.
+  - **`--scene fight` (`film_fight`):** you hold the corridor; four hits, and its last lunge ends with it dead on its back.
+  - The `level_tests` hunter checks require: the hunt reaches stalk, chase, leap and feed; the fight kills the creature with the player alive; three hits leave it alive and four kill it; and roaming hunters never move more than 0.4 m in a step.
 
 ## Rendering (round 4)
 

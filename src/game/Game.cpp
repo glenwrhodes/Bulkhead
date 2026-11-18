@@ -57,6 +57,8 @@ float steamStrength(uint32_t i, float t, float phase) {
     return s * (0.88f + 0.12f * std::sin(t * 19.0f + phase * 30.0f));
 }
 
+Int2 cellOf(Vec3 p) { return {int(std::floor(p.x / kCell + 0.5f)), int(std::floor(p.z / kCell + 0.5f))}; }
+
 Vec3 anyPerpendicular(Vec3 d) {
     Vec3 ref = std::abs(d.y) < 0.9f ? Vec3{0, 1, 0} : Vec3{1, 0, 0};
     return normalize(cross(ref, d));
@@ -163,16 +165,29 @@ bool Game::fire() {
     if (time_ - lastShot_ < kFireInterval || gunModel_ < 0) return false;
     // aim where the crosshair is: find what the camera ray hits, then fly the bolt there
     // from the muzzle
+    if (playerDead()) return false;
     const Vec3 F = camera_.forward();
     Vec3 n;
-    const float d = raycastLevel(maze_, level_, camera_.position, F, 80.0f, doorOpen_, n);
+    float d = raycastLevel(maze_, level_, camera_.position, F, 80.0f, doorOpen_, n);
+    // a creature in the way?
+    int target_hunter = -1;
+    for (size_t i = 0; i < hunters_.size(); ++i) {
+        float t;
+        Vec3 hn;
+        if (hunters_[i].raycast(camera_.position, F, d, t, hn) && t < d) {
+            d = t;
+            n = hn;
+            target_hunter = int(i);
+        }
+    }
     const Vec3 target = camera_.position + F * d;
     lastShot_ = time_;
     ++shotsFired_;
+    shotThisStep_ = true;
     const Vec3 o = muzzlePosition();
     Vec3 to = target - o;
     const float dist = std::max(0.05f, length(to));
-    bolts_.push_back({o, to * (1.0f / dist), time_, dist, n});
+    bolts_.push_back({o, to * (1.0f / dist), time_, dist, n, target_hunter});
     camera_.pitch = std::min(1.35f, camera_.pitch + 0.012f);  // the kick nudges the aim up
     updateEffects();
     return true;
@@ -189,10 +204,20 @@ void Game::updateEffects() {
         const float arrive = b.t0 + b.dist / kBoltSpeed;
         if (time_ >= arrive) {
             const Vec3 at = b.origin + b.dir * b.dist;
-            impacts_.push_back({at, b.normal, arrive, mix32(uint32_t(shotsFired_) * 2654435761u + uint32_t(i))});
-            if (int(scorches_.size()) >= kMaxScorches) scorches_.erase(scorches_.begin());
-            const uint32_t h = mix32(uint32_t(arrive * 1000.0f) + 17u);
-            scorches_.push_back({at + b.normal * 0.006f, b.normal, unit(h) * 2.0f * kPi, 0.8f + 0.5f * unit(mix32(h))});
+            const bool onCreature = b.hunter >= 0 && size_t(b.hunter) < hunters_.size();
+            impacts_.push_back({at, b.normal, arrive, mix32(uint32_t(shotsFired_) * 2654435761u + uint32_t(i)),
+                                onCreature});
+            if (onCreature) {
+                Hunter& h = hunters_[size_t(b.hunter)];
+                const bool wasAlive = h.alive();
+                h.hit(huntWorld(true));
+                if (wasAlive && !h.alive()) ++kills_;
+            } else {
+                if (int(scorches_.size()) >= kMaxScorches) scorches_.erase(scorches_.begin());
+                const uint32_t h = mix32(uint32_t(arrive * 1000.0f) + 17u);
+                scorches_.push_back(
+                    {at + b.normal * 0.006f, b.normal, unit(h) * 2.0f * kPi, 0.8f + 0.5f * unit(mix32(h))});
+            }
             bolts_.erase(bolts_.begin() + std::ptrdiff_t(i));
         } else {
             ++i;
@@ -272,9 +297,27 @@ void Game::updateEffects() {
         ++sparkCount_;
         if (age < 0.14f) {
             const float f = 1.0f - age / 0.14f;
-            dynamic_.push_back({im.position + im.normal * 0.15f, Vec3{0.6f, 0.9f, 1.0f} * (9.0f * f * f), 0.03f, 8.0f});
+            // a hit on the creature bursts amber, like its glow
+            const Vec3 col = im.creature ? Vec3{1.0f, 0.5f, 0.12f} * 1.6f : Vec3{0.6f, 0.9f, 1.0f};
+            dynamic_.push_back({im.position + im.normal * 0.15f, col * (9.0f * f * f), 0.03f, 8.0f});
         }
     }
+    // each hunter's glow lights its surroundings a little (the throat and seams)
+    for (const Hunter& h : hunters_) {
+        if (h.state() == HunterState::Dead || h.glow() < 0.05f) continue;
+        Vec3 d = h.headPosition() - cam;
+        if (dot(d, d) > 30.0f * 30.0f) continue;
+        dynamic_.push_back({h.headPosition(), Vec3{1.0f, 0.45f, 0.1f} * (0.9f * h.glow()), 0.08f, 5.0f});
+        // and the seams along its back light the wall or ceiling it is on: in the dark
+        // it shows as a shape against its own amber glow
+        if (h.alive()) {
+            const Mat4 b = h.creature().bodyMatrix();
+            const Vec3 up = normalize(b.dir({0, 1, 0}));
+            dynamic_.push_back({h.bodyCenter() + up * 0.45f, Vec3{1.0f, 0.42f, 0.08f} * (1.6f * h.glow()), 0.15f, 5.5f});
+        }
+    }
+    if (creatureActive())
+        dynamic_.push_back({creature_.headPosition(), Vec3{1.0f, 0.45f, 0.1f} * 1.2f, 0.08f, 5.0f});
     // keep the brightest, closest few
     auto weight = [&](const DynamicLight& l) {
         Vec3 d = l.position - cam;
@@ -431,6 +474,12 @@ Flashlight Game::flashlight() const {
 }
 
 void Game::update(float dt, const InputState& in) {
+    if (playerDead()) {
+        // no control while it has you; then the run starts over
+        stepWorld(dt);
+        if (deathT_ > kDeathLength) restart();
+        return;
+    }
     const float sens = 0.0022f;
     camera_.yaw -= in.mouseDx * sens;
     camera_.pitch = std::clamp(camera_.pitch - in.mouseDy * sens, -1.35f, 1.35f);
@@ -473,11 +522,131 @@ void Game::update(float dt, const InputState& in) {
     Vec2 side = right * (0.012f * bobAmount_ * std::sin(bob_));
     const float eye = kEyeHeight + (kCrouchEye - kEyeHeight) * crouch_;
     camera_.position = {np.x + side.x, eye + amp * bobAmount_ * std::sin(2.0f * bob_), np.y + side.y};
-    updateDoors(dt);
-    time_ += dt;
-    updateLighting();
-    reveal();
     if (in.fire) fire();
+    stepWorld(dt);
+}
+
+// ---------------------------------------------------------------------------
+// Hunters and the player's death
+// ---------------------------------------------------------------------------
+
+HuntWorld Game::huntWorld(bool shot) const {
+    HuntWorld w;
+    w.maze = &maze_;
+    w.level = &level_;
+    w.doorOpen = &doorOpen_;
+    w.player = camera_.position;
+    w.playerForward = camera_.forward();
+    w.playerAlive = !playerDead();
+    w.shotFired = shot;
+    w.time = time_;
+    return w;
+}
+
+void Game::spawnHunterAt(Int2 cell, int surface, uint64_t seed) {
+    Hunter h(kit_, seed);
+    if (!h.creature().valid()) return;
+    h.spawn(maze_, cell, surface);
+    hunters_.push_back(std::move(h));
+    respawnAt_.push_back(-1.0f);
+}
+
+void Game::spawnHunters(int count) {
+    huntersWanted_ = count;
+    hunters_.clear();
+    respawnAt_.clear();
+    const std::vector<int> dist = maze_.distancesFrom(cellOf(camera_.position));
+    Rng rng(maze_.params().seed ^ (0x51ed27u + spawnCounter_ * 7919u), 0xc0ffeeu);
+    std::vector<Int2> picked;
+    for (int attempt = 0; attempt < 4000 && int(picked.size()) < count; ++attempt) {
+        Int2 c{rng.range(0, maze_.width() - 1), rng.range(0, maze_.height() - 1)};
+        if (maze_.kind(c) != CellKind::Corridor) continue;
+        const int d = dist[size_t(c.y * maze_.width() + c.x)];
+        if (d < 12) continue;  // never right on top of the player
+        if (level_.sections.moodAt(c) == Mood::Lit && !rng.chance(0.1f)) continue;
+        bool apart = true;
+        for (Int2 o : picked) apart = apart && std::abs(o.x - c.x) + std::abs(o.y - c.y) >= 8;
+        if (!apart) continue;
+        picked.push_back(c);
+    }
+    for (Int2 c : picked) spawnHunterAt(c, 2, maze_.params().seed * 31u + (spawnCounter_++));
+}
+
+void Game::restart() {
+    deathT_ = -1.0f;
+    killer_ = -1;
+    camera_ = Camera{};
+    camera_.position = level_.spawn;
+    camera_.yaw = level_.spawnYaw;
+    velocity_ = {};
+    crouch_ = 0.0f;
+    bolts_.clear();
+    impacts_.clear();
+    std::fill(doorOpen_.begin(), doorOpen_.end(), 0.0f);
+    if (huntersWanted_ > 0) spawnHunters(huntersWanted_);
+}
+
+float Game::redout() const {
+    if (!playerDead()) {
+        // a hint of red as one closes in
+        float r = 0.0f;
+        for (const Hunter& h : hunters_)
+            if (h.state() == HunterState::Chase || h.state() == HunterState::Leap)
+                r = std::max(r, 0.25f * (1.0f - std::clamp(length(h.headPosition() - camera_.position) / 8.0f, 0.0f, 1.0f)));
+        return r;
+    }
+    return std::clamp(0.12f + deathT_ / 2.6f, 0.0f, 1.0f);
+}
+
+float Game::blackout() const { return playerDead() ? std::clamp((deathT_ - 2.4f) / 1.4f, 0.0f, 1.0f) : 0.0f; }
+
+void Game::stepWorld(float dt) {
+    time_ += dt;
+    updateDoors(dt);
+    updateLighting();
+    const HuntWorld w = huntWorld(shotThisStep_);
+    shotThisStep_ = false;
+    for (size_t i = 0; i < hunters_.size(); ++i) {
+        Hunter& h = hunters_[i];
+        h.update(dt, w);
+        if (h.grabbedPlayer() && !playerDead()) {
+            deathT_ = 0.0f;
+            killer_ = int(i);
+            deathCam_ = camera_;
+        }
+        // the dead are replaced after a while, somewhere far away (window play)
+        if (h.state() == HunterState::Dead && h.deadFor() > 30.0f && huntersWanted_ > 0 && respawnAt_[i] < 0.0f) {
+            respawnAt_[i] = time_;
+            const std::vector<int> dist = maze_.distancesFrom(cellOf(camera_.position));
+            Rng rng(uint64_t(time_ * 1000.0f) + i, 0xbeefu);
+            for (int attempt = 0; attempt < 2000; ++attempt) {
+                Int2 c{rng.range(0, maze_.width() - 1), rng.range(0, maze_.height() - 1)};
+                if (maze_.kind(c) != CellKind::Corridor || dist[size_t(c.y * maze_.width() + c.x)] < 14) continue;
+                Hunter fresh(kit_, maze_.params().seed * 31u + (spawnCounter_++));
+                fresh.spawn(maze_, c, 2);
+                h = std::move(fresh);
+                respawnAt_[i] = -1.0f;
+                break;
+            }
+        }
+    }
+    if (playerDead()) {
+        deathT_ += dt;
+        // knocked back and down onto the floor, looking up at it
+        const float fall = std::clamp(deathT_ / 0.7f, 0.0f, 1.0f);
+        const float e = 1.0f - (1.0f - fall) * (1.0f - fall);
+        Camera c = deathCam_;
+        const Vec3 back = normalize(Vec3{-deathCam_.forward().x, 0, -deathCam_.forward().z});
+        c.position = deathCam_.position + back * (0.55f * e) + Vec3{0, (0.38f - deathCam_.position.y) * e, 0};
+        c.pitch = deathCam_.pitch + (0.55f - deathCam_.pitch) * e;
+        // the struggle: shaking, worst at the impact
+        const float shake = (deathT_ < 0.3f ? 0.06f : 0.025f) * std::exp(-deathT_ * 0.5f);
+        c.yaw += shake * std::sin(time_ * 37.0f);
+        c.pitch += shake * std::sin(time_ * 29.0f + 1.0f);
+        camera_ = c;
+        if (killer_ >= 0 && size_t(killer_) < hunters_.size()) hunters_[size_t(killer_)].poseOnFace(camera_, deathT_, time_);
+    }
+    reveal();
     updateEffects();
 }
 
@@ -516,12 +685,14 @@ void Game::updateDoors(float dt) {
         Vec3 c = level_.doors[i].center;
         float dx = camera_.position.x - c.x, dz = camera_.position.z - c.z;
         bool want = dx * dx + dz * dz < kDoorTrigger * kDoorTrigger;
-        if (creatureActive()) {  // doors open for the creature too
-            for (Vec3 p : {creature_.headPosition(), creature_.bodyCenter()}) {
-                float cx = p.x - c.x, cz = p.z - c.z;
-                want = want || cx * cx + cz * cz < kDoorTrigger * kDoorTrigger;
-            }
-        }
+        auto near = [&](Vec3 p) {
+            float cx = p.x - c.x, cz = p.z - c.z;
+            return cx * cx + cz * cz < kDoorTrigger * kDoorTrigger;
+        };
+        if (creatureActive())  // doors open for the creature too
+            want = want || near(creature_.headPosition()) || near(creature_.bodyCenter());
+        for (const Hunter& h : hunters_)
+            if (h.alive()) want = want || near(h.headPosition()) || near(h.bodyCenter());
         float step = dt / kDoorTime;
         doorOpen_[i] = std::clamp(doorOpen_[i] + (want ? step : -step), 0.0f, 1.0f);
     }
@@ -587,7 +758,9 @@ void Game::buildInstances(std::vector<SceneInstance>& out, bool withGun) const {
             addSparks(out, e.position, e.direction, age, seed, 16, 2.4f, 0.85f);
         }
     }
-    for (const Impact& im : impacts_) addSparks(out, im.position, im.normal, time_ - im.t0, im.seed, 18, 3.6f, 0.75f);
+    for (const Impact& im : impacts_)
+        addSparks(out, im.position, im.normal, time_ - im.t0, im.seed, im.creature ? 26 : 18, 3.6f, 0.75f);
+    for (const Hunter& h : hunters_) h.appendInstances(out);
     // bolts in flight: a glowing streak, stretched along its path
     if (boltModel_ >= 0)
         for (const Bolt& b : bolts_) {
@@ -1010,6 +1183,131 @@ void Game::setCrawlTime(float t) {
     updateLighting();
     reveal();
     updateEffects();
+}
+
+// ---------------------------------------------------------------------------
+// The hunt and fight scenes: the real AI, a scripted player
+// ---------------------------------------------------------------------------
+
+bool Game::setupHuntScene(bool fight) {
+    const Maze& m = maze_;
+    auto step = [](Int2 c, int d) { return Int2{c.x + kDx[d], c.y + kDy[d]}; };
+    auto straightAlong = [&](Int2 c, int d) {
+        if (!m.inBounds(c) || m.kind(c) != CellKind::Corridor) return false;
+        return m.passable(c.x, c.y, Dir(d)) && m.passable(c.x, c.y, Dir((d + 2) & 3)) &&
+               !m.passable(c.x, c.y, Dir((d + 1) & 3)) && !m.passable(c.x, c.y, Dir((d + 3) & 3));
+    };
+    int bestScore = -100000, bestD = 0;
+    std::vector<Int2> best;
+    for (int y = 0; y < m.height(); ++y)
+        for (int x = 0; x < m.width(); ++x)
+            for (int d = 0; d < 4; ++d) {
+                Int2 c{x, y};
+                if (!straightAlong(c, d) || straightAlong(step(c, (d + 2) & 3), d)) continue;
+                std::vector<Int2> run;
+                while (straightAlong(c, d)) {
+                    run.push_back(c);
+                    c = step(c, d);
+                }
+                if (run.size() < 5) continue;
+                const Mood mood = level_.sections.moodAt(run[run.size() / 2]);
+                int score = int(std::min<size_t>(run.size(), 8)) * 3;
+                // hunt: the dark, the flashlight and its glow; fight: enough light to see it die
+                if (fight) score += mood == Mood::Dim ? 30 : mood == Mood::Derelict ? 24 : mood == Mood::Dark ? 10 : 0;
+                else score += mood == Mood::Derelict ? 30 : mood == Mood::Dark ? 26 : mood == Mood::Dim ? 12 : 0;
+                for (Int2 r : run) {
+                    for (const LowPipe& lp : level_.lowPipes)
+                        if (std::abs(lp.center.x - cellCenter(r).x) < 2.1f && std::abs(lp.center.z - cellCenter(r).z) < 2.1f)
+                            score -= 1000;
+                    const int cellIdx = r.y * m.width() + r.x;
+                    for (const PlacedModel& pm : level_.placed)
+                        if (pm.cell == cellIdx && kit_.model(pm.model).name == "debris") score -= 6;
+                }
+                if (score > bestScore) {
+                    bestScore = score;
+                    best = run;
+                    bestD = d;
+                }
+            }
+    if (best.empty()) return false;
+    scene_ = HuntScene{};
+    scene_.fight = fight;
+    scene_.run = best;
+    scene_.dir = dirVector(Dir(bestD));
+    scene_.start = cellCenter(best[0]) + scene_.dir * 0.5f + Vec3{0, kEyeHeight, 0};
+    scene_.yaw = std::atan2(-scene_.dir.x, -scene_.dir.z);
+    scene_.pitch = -0.04f;
+    scene_.length = fight ? 16.0f : 24.0f;
+    camera_ = Camera{};
+    camera_.position = scene_.start;
+    camera_.yaw = scene_.yaw;
+    camera_.pitch = scene_.pitch;
+    flashlightOn_ = true;
+    // the creature: just beyond the far end, on the ceiling
+    Int2 far = best.back();
+    const Int2 beyond = step(far, bestD);
+    if (m.passable(far.x, far.y, Dir(bestD)) && m.kind(beyond) == CellKind::Corridor) far = beyond;
+    hunters_.clear();
+    respawnAt_.clear();
+    huntersWanted_ = 0;
+    spawnHunterAt(far, fight ? 0 : 2, maze_.params().seed * 977u + (fight ? 1u : 2u));
+    return !hunters_.empty();
+}
+
+void Game::stepHuntScene(float t, float dt) {
+    if (hunters_.empty()) return;
+    Hunter& h = hunters_[0];
+    auto aimAt = [&](Vec3 target, float rate) {
+        const Vec3 d = target - camera_.position;
+        const float wantYaw = std::atan2(-d.x, -d.z);
+        const float wantPitch = std::atan2(d.y, std::sqrt(d.x * d.x + d.z * d.z));
+        float dy = wantYaw - scene_.yaw;
+        while (dy > kPi) dy -= 2.0f * kPi;
+        while (dy < -kPi) dy += 2.0f * kPi;
+        const float k = std::min(1.0f, dt * rate);
+        scene_.yaw += dy * k;
+        scene_.pitch += (wantPitch - scene_.pitch) * k;
+    };
+    if (!playerDead()) {
+        const Vec3 head = h.headPosition();
+        const float dist = length(head - camera_.position);
+        const bool hunting = h.state() == HunterState::Stalk || h.state() == HunterState::Chase ||
+                             h.state() == HunterState::Leap;
+        if (scene_.fight) {
+            if (t >= 0.8f && h.state() == HunterState::Roam) h.alert(huntWorld(false), true);
+            if (h.alive() && hunting) aimAt(h.bodyCenter() * 0.6f + head * 0.4f, 7.0f);
+            else if (!h.alive()) aimAt(h.bodyCenter(), 2.0f);
+            camera_.yaw = scene_.yaw;
+            camera_.pitch = scene_.pitch;
+            if (h.alive() && hunting && dist < 9.5f && t >= scene_.nextShot) {
+                if (fire()) scene_.nextShot = t + 0.5f;
+            }
+            if (!h.alive() && scene_.endAt < 0.0f) scene_.endAt = t + 3.8f;
+        } else {
+            if (t >= 1.6f && h.state() == HunterState::Roam) h.alert(huntWorld(false), false);
+            // walk in slowly; once it is close, back away from it
+            const float lenRun = float(scene_.run.size() - 1) * kCell;
+            float along = dot(camera_.position - scene_.start, scene_.dir);
+            if (dist > 10.0f && h.state() != HunterState::Chase) along = std::min(along + 1.0f * dt, lenRun - 6.0f);
+            else along = std::max(along - 1.1f * dt, -0.3f);
+            const float bob = 0.012f * std::sin(along / 0.6f * kPi);
+            camera_.position = scene_.start + scene_.dir * along + Vec3{0, bob, 0};
+            if (hunting && t > 1.8f) aimAt(head, 3.5f);
+            else aimAt(scene_.start + scene_.dir * 12.0f + Vec3{0, -0.3f, 0}, 2.0f);
+            camera_.yaw = scene_.yaw;
+            camera_.pitch = scene_.pitch;
+            // two panicked hits as it charges: it flinches, and keeps coming
+            if (h.state() == HunterState::Chase && dist < 8.5f && scene_.shots < 2 && t >= scene_.nextShot) {
+                if (fire()) {
+                    ++scene_.shots;
+                    scene_.nextShot = t + 0.45f;
+                }
+            }
+        }
+    }
+    stepWorld(dt);
+    // ends most of the way into the fade to black (an all-black frame says nothing)
+    if (playerDead() && scene_.endAt < 0.0f) scene_.endAt = t + 3.0f;
 }
 
 }  // namespace bh

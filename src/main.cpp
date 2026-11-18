@@ -252,8 +252,18 @@ int runCapture(const Options& o) {
                   game.crawlDuration(), game.crawlPath().length(), game.crawlPath().project(game.camera().position),
                   toString(game.moodAtCamera()));
     }
+    const bool huntScene = o.scene == "hunt" || o.scene == "fight";
+    if (huntScene) {
+        if (!game.setupHuntScene(o.scene == "fight")) {
+            log::error("Scene '{}': no corridor for it (or the kit has no creature)", o.scene);
+            return 1;
+        }
+        log::info("Scene '{}': up to {:.1f} s, in a {} section", o.scene, game.huntSceneLength(),
+                  toString(game.moodAtCamera()));
+    }
     const float sceneLength = fireScene    ? FireScene::kDuration
                               : crawlScene ? game.crawlDuration()
+                              : huntScene  ? game.huntSceneLength()
                                            : game.walkDuration();
     const int frames = o.frames > 0 ? o.frames : int(std::ceil((sceneLength - o.start) * float(o.fps)));
     log::info("Capture: {} frames at {}x{}, {} fps, {} spp, RT {}, seed {} -> {}", frames, o.width, o.height, o.fps,
@@ -277,6 +287,9 @@ int runCapture(const Options& o) {
             }
         } else if (crawlScene) {
             game.setCrawlTime(t);
+        } else if (huntScene) {
+            game.stepHuntScene(t, dt);  // the world steps itself (doors included)
+            return;
         } else {
             game.setWalkTime(t);
         }
@@ -296,10 +309,24 @@ int runCapture(const Options& o) {
     };
     std::vector<SceneInstance> instances;
     float exitFlash = 0.0f;
+    int written = 0;
+    std::string lastHuntLog;
     for (int i = 0; i < frames; ++i) {
         const float t = o.start + float(i) * dt;
+        if (huntScene && game.huntSceneDone(t)) break;
         stepScene(t);
-        game.buildInstances(instances);
+        ++written;
+        if (huntScene && !game.hunters().empty()) {
+            const Hunter& h = game.hunters()[0];
+            std::string line = std::format("{} hp {}{}", toString(h.state()), h.health(),
+                                           game.playerDead() ? ", player dead" : "");
+            if (line != lastHuntLog) {
+                log::info("  t={:.2f}s frame {}: creature {} at {:.1f} m", t, i + 1, line,
+                          length(h.headPosition() - game.camera().position));
+                lastHuntLog = line;
+            }
+        }
+        game.buildInstances(instances, !game.playerDead() || game.deathTime() < 0.25f);
         if (!fireScene && !crawlScene && game.reachedExit()) exitFlash = std::min(1.0f, exitFlash + dt / 1.2f);
         FrameSettings s;
         s.camera = game.camera();
@@ -311,6 +338,9 @@ int runCapture(const Options& o) {
         s.playerMapUV = mapUV(map, game.camera().position);
         s.exitFlash = exitFlash * exitFlash;
         applyGame(s, game, o);
+        s.redout = game.redout();
+        s.blackout = game.blackout();
+        if (game.playerDead()) s.hud = false;
         const fs::path file = dir / std::format("frame_{:04}.png", i + 1);
         pending.push_back(std::async(std::launch::async,
                                      [img = renderer.renderToImage(instances, s), file] { return img.writePng(file); }));
@@ -338,7 +368,7 @@ int runCapture(const Options& o) {
         "{{\n  \"seed\": {},\n  \"maze\": \"{}x{}\",\n  \"frames\": {},\n  \"fps\": {},\n  \"width\": {},\n"
         "  \"height\": {},\n  \"spp\": {},\n  \"rayTracing\": {},\n  \"gpu\": \"{}\",\n  \"rooms\": {},\n"
         "  \"doors\": {},\n  \"lights\": {},\n  \"walkMetres\": {:.1f},\n  \"seconds\": {:.2f}\n}}\n",
-        seed, o.mazeWidth, o.mazeHeight, frames, o.fps, o.width, o.height, o.spp, o.rayTracing ? "true" : "false",
+        seed, o.mazeWidth, o.mazeHeight, written, o.fps, o.width, o.height, o.spp, o.rayTracing ? "true" : "false",
         jsonEscape(gpu.info().adapterName), game.maze().rooms().size(), game.level().doors.size(),
         game.level().lights.size(), game.walk().length(), seconds);
     log::info("Capture done in {:.1f} s", seconds);
@@ -493,6 +523,7 @@ int runInteractive(const Options& o) {
     auto newShip = [&] {
         game = std::make_unique<Game>(kit, mazeParams(o, seed));
         game->setFlashlight(flashlight);
+        game->spawnHunters(o.creatures);
         describe(*game);
         map = gameMap(*game);
         uploadMap(renderer, map);
@@ -559,8 +590,10 @@ int runInteractive(const Options& o) {
         // the click that grabs the mouse does not fire
         in.fire = window.mouseCaptured() && window.keyDown(VK_LBUTTON);
         window.takeMouseDelta(in.mouseDx, in.mouseDy);
+        const bool wasDead = game->playerDead();
         game->update(dt, in);
-        game->buildInstances(instances);
+        if (wasDead && !game->playerDead()) reset = true;  // restarted at the spawn
+        game->buildInstances(instances, !game->playerDead() || game->deathTime() < 0.25f);
 
         mapOpacity += ((showMap ? 1.0f : 0.0f) - mapOpacity) * std::min(1.0f, dt * 10.0f);
         const bool escaped = game->reachedExit();
@@ -577,8 +610,15 @@ int runInteractive(const Options& o) {
         s.playerMapUV = mapUV(map, game->camera().position);
         s.resetHistory = reset;
         applyGame(s, *game, o);
-        // flickering lights: keep only a few frames of history so the flicker stays sharp
-        s.maxHistory = game->lightingChange() > 0.15f ? 3 : 16;
+        s.redout = game->redout();
+        s.blackout = game->blackout();
+        if (game->playerDead()) s.hud = false;
+        // flickering lights: keep only a few frames of history so the flicker stays sharp;
+        // and moving creatures nearby smear with a long history
+        bool hunterNear = false;
+        for (const Hunter& hh : game->hunters())
+            hunterNear = hunterNear || (hh.alive() && length(hh.headPosition() - game->camera().position) < 14.0f);
+        s.maxHistory = game->lightingChange() > 0.15f ? 3 : hunterNear ? 6 : 16;
         reset = false;
         renderer.renderAndPresent(instances, s);
 
@@ -598,7 +638,10 @@ int runInteractive(const Options& o) {
             fps = fpsFrames / fpsTimer;
             fpsFrames = 0;
             fpsTimer = 0.0f;
-            std::string status = escaped ? "  |  ESCAPED! N = new ship" : "";
+            std::string status = escaped                 ? "  |  ESCAPED! N = new ship"
+                                 : game->playerDead()    ? "  |  YOU WERE KILLED"
+                                                         : "";
+            status += std::format("  |  kills {}", game->kills());
             window.setTitle(std::format(
                 "Bulkhead  |  seed {}  |  RT {}  |  {:.0f} fps  |  {}  |  WASD move, mouse look, click fire, Ctrl crouch, "
                 "Shift run, F flashlight, M map, R ray tracing, H HUD, N new ship, Esc mouse{}",

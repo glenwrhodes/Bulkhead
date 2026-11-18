@@ -898,7 +898,7 @@
         "creature_fx_bone_arm_L",
         "creature_fx_bone_fore_L"
       ],
-      "triangles": 112318,
+      "triangles": 213158,
       "materials": [
         "BH_Bone",
         "BH_Chitin",
@@ -907,7 +907,7 @@
         "BH_Sinew"
       ],
       "lights": 0,
-      "bytes": 2911336
+      "bytes": 5394156
     }
   }
 }

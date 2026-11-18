@@ -13,6 +13,7 @@
 #include "core/Math.h"
 #include "game/Creature.h"
 #include "game/Effects.h"
+#include "game/Hunter.h"
 #include "world/CrawlSurface.h"
 #include "world/Level.h"
 #include "world/Maze.h"
@@ -130,6 +131,31 @@ public:
     float crawlU(float s) const;
     float crawlS(float t) const;  // distance along its path at scene time t
 
+    // ---- hunters (rounds 9-10) ----
+    // Puts `count` creatures loose in the ship, in the dim, dark and derelict sections
+    // away from the player. They roam, stalk, chase, leap and kill; four hits kill one.
+    void spawnHunters(int count);
+    const std::vector<Hunter>& hunters() const { return hunters_; }
+    // Advances everything but the player: doors, lights, hunters, effects, the death scene.
+    void stepWorld(float dt);
+    // The player's death: a hunter has you. 0 alive; seconds since it grabbed you.
+    bool playerDead() const { return deathT_ >= 0.0f; }
+    float deathTime() const { return deathT_; }
+    float redout() const;    // 0..1 red over the screen
+    float blackout() const;  // 0..1 fade to black
+    static constexpr float kDeathLength = 4.6f;  // then the window restarts the run
+    void restart();          // back to the start: player, hunters, doors
+    int kills() const { return kills_; }
+
+    // Filmed scenes driven by the real AI at fixed steps (capture --scene hunt|fight).
+    // hunt: you walk a dark corridor, it stalks you on the ceiling, you back off and hit
+    //       it twice, it charges, leaps, and you die.
+    // fight: you hold a corridor while one charges; four hits and it dies.
+    bool setupHuntScene(bool fight);
+    void stepHuntScene(float t, float dt);
+    float huntSceneLength() const { return scene_.length; }
+    bool huntSceneDone(float t) const { return scene_.endAt >= 0.0f && t >= scene_.endAt; }
+
     static constexpr float kWalkSpeed = 2.6f;    // scripted walk, m/s
     static constexpr float kCrouchWalkSpeed = 1.25f;
     static constexpr float kStartPause = 0.6f;
@@ -145,12 +171,28 @@ private:
         Vec3 origin, dir;
         float t0 = 0.0f, dist = 0.0f;
         Vec3 normal;
+        int hunter = -1;  // >= 0: it hits this creature
     };
     struct Impact {
         Vec3 position, normal;
         float t0 = 0.0f;
         uint32_t seed = 0;
+        bool creature = false;
     };
+    struct HuntScene {
+        bool fight = false;
+        std::vector<Int2> run;      // the corridor, player's end first
+        Vec3 dir;                   // along the run, away from the player's end
+        Vec3 start;                 // player's eye at t = 0
+        float length = 0.0f;
+        float yaw = 0.0f, pitch = 0.0f;
+        float backed = 0.0f;        // how far the player has backed off
+        float nextShot = 0.0f;
+        int shots = 0;
+        float endAt = -1.0f;
+    } scene_;
+    HuntWorld huntWorld(bool shot) const;
+    void spawnHunterAt(Int2 cell, int surface, uint64_t seed);
     struct Scorch {
         Vec3 position, normal;
         float roll = 0.0f;
@@ -194,6 +236,16 @@ private:
     std::vector<SteamPlume> steam_;
     std::vector<int> nearEmitters_;
     int sparkCount_ = 0;
+    // hunters and the player's death
+    std::vector<Hunter> hunters_;
+    int huntersWanted_ = 0;
+    std::vector<float> respawnAt_;
+    float deathT_ = -1.0f;
+    int killer_ = -1;
+    Camera deathCam_;
+    bool shotThisStep_ = false;
+    int kills_ = 0;
+    uint64_t spawnCounter_ = 0;
     // the creature and its scene
     Creature creature_;
     CrawlPath crawlPath_;

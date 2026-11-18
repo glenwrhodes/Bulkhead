@@ -63,6 +63,14 @@ bulkhead_png_test(crawl_smoke smoke
   GAME  --capture "${CAP}/crawl_smoke" --scene crawl --frames 24 --start 6 --res 640x360 --spp 2 --seed 42
   CHECK --dir "${CAP}/crawl_smoke" --count 24 --width 640 --height 360 --expect-motion)
 
+# Hunters: the hunt (it kills you) and the fight (you kill it), short and small.
+bulkhead_png_test(hunt_smoke smoke
+  GAME  --capture "${CAP}/hunt_smoke" --scene hunt --res 480x270 --fps 15 --spp 2 --seed 1234
+  CHECK --dir "${CAP}/hunt_smoke" --at-least 100 --width 480 --height 270 --expect-motion)
+bulkhead_png_test(fight_smoke smoke
+  GAME  --capture "${CAP}/fight_smoke" --scene fight --res 480x270 --fps 15 --spp 2 --seed 1234
+  CHECK --dir "${CAP}/fight_smoke" --at-least 100 --width 480 --height 270 --expect-motion)
+
 bulkhead_png_test(shots_smoke smoke
   GAME  --shots "${CAP}/shots_smoke" --res 640x360 --spp 4 --seed 1234
   CHECK --file "${CAP}/shots_smoke/shot_door_rt.png" --width 640 --height 360)
@@ -122,6 +130,16 @@ bulkhead_png_test(film_fire film
 bulkhead_png_test(film_crawl film
   GAME  --capture "${CAP}/crawl" --scene crawl --res 1920x1080 --fps 30 --spp 16 --seed 42
   CHECK --dir "${CAP}/crawl" --at-least 300 --width 1920 --height 1080 --expect-motion)
+
+# The hunt: a dark corridor, the flashlight; it stalks you on the ceiling, you back off and
+# hit it twice, it charges, leaps, and you die. The AI plays it out at fixed steps.
+bulkhead_png_test(film_hunt film
+  GAME  --capture "${CAP}/hunt" --scene hunt --res 1920x1080 --fps 30 --spp 16 --seed ${FILM_SEED}
+  CHECK --dir "${CAP}/hunt" --at-least 300 --width 1920 --height 1080 --expect-motion)
+# The fight: one charges you; four hits and it dies on its back.
+bulkhead_png_test(film_fight film
+  GAME  --capture "${CAP}/fight" --scene fight --res 1920x1080 --fps 30 --spp 16 --seed ${FILM_SEED}
+  CHECK --dir "${CAP}/fight" --at-least 250 --width 1920 --height 1080 --expect-motion)
 
 # Fixed views with ray tracing on and off, for side-by-side comparison: corridor, door,
 # room, junction, one corridor in each mood (lit, dim, dark, derelict), and the derelict

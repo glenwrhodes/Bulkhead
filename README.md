@@ -21,9 +21,10 @@ Find the red airlock: it is the room farthest from where you start. The controls
 the table under [Play](#play) and in `PLAY.txt` in the zip.
 
 **Current state (rounds 5-8):**
-- Something lives in the ship: a biomechanical crawler (eyeless wedge skull, four petal
-  jaws, hooked forelimbs, amber seams) that crawls on floors, walls and ceilings. Round 8
-  has it in a filmed scene; hunting and fighting it come next.
+- Three things live in the ship: biomechanical crawlers (eyeless wedge skull, four petal
+  jaws, hooked forelimbs, plated limbs, amber seams) that roam floors, walls and
+  ceilings. One that sees you stalks you along the ceiling, charges, and leaps at your
+  face; if it reaches you, you die. Four hits kill one. Dead ones are replaced.
 - The generated ship (40 × 40 cells, 160 m square) is built from the Blender kit:
   corridors, rooms, doors and props.
 - It is split into sections, each with a mood: **lit**, **dim** (warm, failing lights),
@@ -106,6 +107,8 @@ Captures go to `captures/` (git-ignored):
 | `captures/walkthrough_a/`, `walkthrough_b/` | The 1080p walk from start to exit, in two halves (lit, dim, derelict, dark; it crouches under a low pipe at 71 s and 140 s) |
 | `captures/fire/` | Standing in a dark corridor and firing six shots (1080p, 6 s) |
 | `captures/crawl/` | The creature: along the floor, up the wall, across the ceiling overhead (1080p, 15 s, seed 42) |
+| `captures/hunt/` | A creature hunts the player down: stalks, charges, leaps; the player dies (1080p, ~10 s) |
+| `captures/fight/` | The player kills one: four hits as it charges; it dies on its back (1080p, ~11 s) |
 | `video/blender/creature/` | Blender renders of the creature: turntable, hero shot, crawl cycle |
 | `captures/walkthrough_overhead_seed1234.png` | The map of that ship, sections in colour |
 | `captures/shots/` | RT on/off pairs, including `shot_corridor_{lit,dim,dark,derelict}_rt.png` and `shot_{broken_ceiling,steam,low_pipe,beacon}_rt.png` |

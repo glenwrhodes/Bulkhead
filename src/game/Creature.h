@@ -39,6 +39,7 @@ struct CreaturePose {
     float glow = 0.7f;                      // amber seams, 0 dark .. 1 hunting
     bool look = false;                      // turn the head toward lookAt
     Vec3 lookAt;
+    float flinch = 0.0f;                    // 0..1: jolted back by a hit
 };
 
 class Creature {
@@ -51,7 +52,18 @@ public:
 
     // Poses every part on the path.
     void pose(const CrawlPath& path, const CreaturePose& p);
+    // The whole creature as one rigid body: `body` maps the rest model into the world.
+    // arms 0..1 raises the scythes, legs > 0 curls the legs in, < 0 throws them forward.
+    void poseRigid(const Mat4& body, float jaw, float glow, float arms, float legs, float time);
+    // The current body frame (rest model -> world), as poseRigid takes it.
+    Mat4 bodyMatrix() const;
+    // Dying: snapshot the current pose, then poseDeath(t) spasms, drops to the floor on
+    // its back, curls its legs and lets its glow die.
+    void captureDeath();
+    void poseDeath(float t, float time);
     void appendInstances(std::vector<SceneInstance>& out) const;
+    // A ray against the creature's hit spheres. Returns true with the distance and normal.
+    bool raycast(Vec3 o, Vec3 d, float maxDist, float& t, Vec3& n) const;
 
     Vec3 headPosition() const { return head_; }
     Vec3 bodyCenter() const { return center_; }
@@ -61,6 +73,9 @@ public:
     // The claw tip as the posed tibia actually puts it (for tests: IK keeps limb lengths).
     Vec3 posedClaw(int leg) const;
     static const char* legName(int leg);
+    Vec3 restPivot(const char* bone) const;
+    // Blend two rigid frames (positions lerped, axes lerped and re-orthonormalised).
+    static Mat4 blendFrames(const Mat4& a, const Mat4& b, float t);
 
 private:
     struct Bone {
@@ -69,12 +84,23 @@ private:
         std::vector<uint32_t> parts;
         Mat4 world;                  // this frame
     };
+    struct HitSphere {
+        int bone;
+        Vec3 center;  // rest, model space
+        float radius;
+    };
     int find(const std::string& name) const;
     Mat4 bodyFrame(const CrawlPath& path, const CreaturePose& p, float sOff, float height, float lateral) const;
+    // Rest-pose bone matrices (model space) with the arms, legs, jaws and tail posed.
+    std::vector<Mat4> localPose(float jaw, float arms, float legs, float tailCurl, float time) const;
+    void updateFeet();
 
     bool valid_ = false;
     int model_ = -1;
     std::vector<Bone> bones_;
+    std::vector<HitSphere> hits_;
+    std::vector<Mat4> deathFrom_;
+    Mat4 deathBody_;
     std::array<Vec3, 4> restFoot_{};
     std::array<Vec3, 4> feet_{};
     std::array<bool, 4> planted_{};
