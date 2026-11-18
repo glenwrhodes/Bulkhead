@@ -33,7 +33,12 @@ struct Options {
     float minutes = 10.0f;         // --encounters: each run's length
     bool sweep = false;            // --encounters: try a grid of tunings (count, drift, hearing)
     bool overlay = false;          // capture --scene climb: draw the crawl's machinery over it
+    bool temporal = false;         // capture: 1 sample a frame with the window's history (its noise)
     int testLights = 0;            // --bench: add this many short-lived lights round the camera (cost test)
+    std::string lights = "sampled";  // "sampled" (round 18) or "all" (every light in range, shadow-tested)
+    std::optional<bool> lightCaps;   // the old caps on short-lived lights; default: on with "all"
+    int lightPicks = 2;              // sampled: lights shadow-tested per pixel (1-4)
+    bool lightCapsOn() const { return lightCaps.value_or(lights == "all"); }
     int stepHz = 100;              // weave capture: game steps per second
     std::string scene = "walk";    // capture: "walk" (start -> exit), "fire" (six shots), "crawl" (the creature)
     float haze = 1.0f;             // haze density multiplier

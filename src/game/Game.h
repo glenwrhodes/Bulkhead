@@ -98,6 +98,12 @@ public:
     // The window drops temporal history when this is large, so flicker stays crisp.
     float lightingChange() const { return lightingChange_; }
 
+    // Round 18: with sampled lighting the short-lived lights are not capped (every creature's
+    // glow lights its surroundings). setLightCaps(true) brings back the caps of the lighting
+    // before it (16 short-lived lights, the creatures' glow on the three nearest only), for
+    // filming the old way (--lights all).
+    void setLightCaps(bool on) { lightCaps_ = on; }
+    bool lightCaps() const { return lightCaps_; }
     void setFlashlight(bool on) { flashlightOn_ = on; }
     bool flashlightOn() const { return flashlightOn_; }
     Flashlight flashlight() const;
@@ -220,6 +226,14 @@ public:
     float scannerSceneLength() const { return scan_.length; }
     bool scannerSceneDone(float t) const { return scan_.endAt >= 0.0f && t >= scan_.endAt; }
 
+    // The glow scene (round 18, capture --scene glow, 14 s): ten creatures crawl about a dark
+    // corridor, over the walls and ceiling, ignoring you; the flashlight is off, so their
+    // glow is most of the light. You stand 3 s, then walk slowly up the corridor, looking
+    // from side to side. For comparing the lighting (--lights all / sampled).
+    bool setupGlowScene();
+    void stepGlowScene(float t, float dt);
+    float glowSceneLength() const { return 14.0f; }
+
     // Filmed scenes driven by the real AI at fixed steps (capture --scene hunt|fight).
     // hunt: you walk a dark corridor, it stalks you on the ceiling, you back off and hit
     //       it twice, it charges, leaps, and you die.
@@ -303,6 +317,7 @@ private:
     float lightingChange_ = 0.0f;
     std::vector<uint8_t> explored_;
     bool flashlightOn_ = true;
+    bool lightCaps_ = false;
     // scripted walk timing: distance -> time, with slow crouched stretches
     std::vector<float> walkS_, walkT_, walkC_;
     // gun
@@ -345,6 +360,13 @@ private:
 public:
     float scannerSeenAt() const { return scan_.seenAt; }
 private:
+    struct GlowScene {
+        std::vector<Int2> run;    // the corridor, the camera's end first
+        Vec3 dir, start;
+        float yaw = 0.0f;
+        std::vector<float> retarget;  // when each creature next picks a new cell
+    } glow_;
+    bool huntersIgnorePlayer_ = false;  // (the glow scene: they roam about you)
     std::vector<float> respawnAt_;
     float deathT_ = -1.0f;
     int killer_ = -1;

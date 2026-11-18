@@ -31,6 +31,7 @@ struct PresentConstants {
     float p0[4], p1[4], p2[4], p3[4], p4[4], p5[4], p6[4];
 };
 constexpr uint32_t kMaxBlips = 32;
+constexpr uint32_t kMaxDynLights = 128;  // short-lived lights a frame (32 before round 18)
 constexpr UINT kPresentConstantCount = sizeof(PresentConstants) / 4;
 
 struct GpuSubmesh {
@@ -671,8 +672,8 @@ void Renderer::recordScene(const std::vector<SceneInstance>& instances, const Fr
         const bool fog = s.explored && s.explored->size() == cells;
         for (uint32_t i = 0; i < cells; ++i) ex[i] = fog ? ((*s.explored)[i] ? 1u : 0u) : 1u;
 
-        const size_t dn = s.dynamicLights ? std::min<size_t>(s.dynamicLights->size(), 32) : 0;
-        ensure(f.dynLights, f.dynLightsPtr, f.dynLightsCapacity, 32, sizeof(GpuLight));
+        const size_t dn = s.dynamicLights ? std::min<size_t>(s.dynamicLights->size(), kMaxDynLights) : 0;
+        ensure(f.dynLights, f.dynLightsPtr, f.dynLightsCapacity, kMaxDynLights, sizeof(GpuLight));
         auto* dl = static_cast<GpuLight*>(f.dynLightsPtr);
         for (size_t i = 0; i < dn; ++i) {
             const DynamicLight& l = (*s.dynamicLights)[i];
@@ -780,6 +781,8 @@ void Renderer::recordScene(const std::vector<SceneInstance>& instances, const Fr
         c.haze[0] = s.haze;
         c.haze[1] = 0.2f;        // Henyey-Greenstein g: a little forward scattering
         c.haze[2] = s.time;
+        // lights picked per pixel (0: all of them), plus 8 for the plain estimator
+        c.haze[3] = float(std::clamp(s.lightPicks, 0, 4) + (s.lightPicks > 0 && s.plainEstimator ? 8 : 0));
         std::memcpy(f.constantsPtr + size_t(k) * 256, &c, sizeof(c));
 
         transition(accum_[cur].Get(), accumState_[cur], D3D12_RESOURCE_STATE_UNORDERED_ACCESS);

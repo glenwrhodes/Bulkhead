@@ -56,6 +56,14 @@ struct FrameSettings {
     const std::vector<SteamPlume>* steam = nullptr;
     // The motion scanner (round 17): blips and the pulse's front, on the minimap and the map.
     ScanState scan;
+    // Round 18: direct light at the surfaces the camera sees. 1-4: each pixel picks this many
+    // lights at random, weighted by what each could add there, and shadow-tests only those.
+    // 0: every light in range is shadow-tested (the lighting before it).
+    int lightPicks = 2;
+    // Sampled: false (default): the picks estimate the share of the light that gets through,
+    // times the unshadowed light added up exactly (no noise where all or none is visible).
+    // true: each pick divided by its chance (unbiased, noisier).
+    bool plainEstimator = false;
 };
 
 class Renderer {

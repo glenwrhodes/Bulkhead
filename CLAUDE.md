@@ -111,9 +111,14 @@ milestone status are in `docs/PLAN.md`; update that table when a milestone lands
   model and emitter outside the viewport cells against `buildLevel(..., false)`.
 - Rays that leave the ship see `sky()` in `trace.hlsl`. Pixels that reach space through glass
   store id 16000000 and a point 500 m out, so the window reprojects them as infinitely far.
-- Each light in range is a shadow ray on every pixel it reaches (~0.3 ms a light at 1080p,
-  `ctest -L diag -R light_cost`). Lighting is not free per light, hence the caps until lights
-  are sampled instead (PLAN.md, "How many lights").
+- Lights are sampled (round 18, PLAN.md "Sampled lighting"): each pixel weighs every light in
+  range without rays, picks two in proportion to what they add, shadow-tests only those, and
+  scales the exact unshadowed sum by the share that got through. Extra lights cost ~0.013 ms
+  each at 1080p (`ctest -L diag -R light_cost`), so there are no caps on creature glow.
+  `--lights all` keeps the old every-light shading (and its caps) for comparisons; keep
+  `directLight` working. Weights must never be 0 for a light that adds something, or it
+  silently vanishes. Noise shows in the window, not in converged captures: compare with
+  `--temporal` captures (`film_glow_*`).
 - Sound: anything new that should be heard goes through `Game::collectSounds` (push a
   one-shot with `Game::sound`, or detect it there against last frame, or add a keyed loop).
   The mixer is shared by the window and the captures, so a capture's `audio.wav` is the test.

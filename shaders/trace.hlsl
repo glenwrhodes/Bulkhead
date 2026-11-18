@@ -53,7 +53,7 @@ cbuffer Frame : register(b0)
     float4 flashPos;    // xyz position, w intensity (W/sr, 0 = off)
     float4 flashDir;    // xyz direction, w cos(outer cone)
     float4 flashCone;   // x cos(inner cone), y cos(spill edge), z range, w steam plume count
-    float4 hazeParams;  // x density multiplier, y HG g, z time
+    float4 hazeParams;  // x density multiplier, y HG g, z time, w lights picked per pixel (0: all)
 };
 
 struct Steam { float4 originLength; float4 dirStrength; float4 lightSeed; };
@@ -396,6 +396,193 @@ float3 directLight(float3 P, float3 N, float3 V, Surface s, bool shadows, bool s
     return sum;
 }
 
+// Round 18: the same light, sampled. Every light in range is still looked at, but without a
+// ray: what it would add here if nothing were in the way (its power, distance, range, angle
+// and the surface's BRDF, at its centre). Those add up to the unshadowed light S, exactly.
+// Each of nPicks picks then chooses one light at random in proportion to what it adds
+// (weighted reservoir sampling: one pass, no list), and only the picked lights get a shadow
+// ray (to a random point on the light: soft shadows).
+//   ratio (default): the picks only estimate how much of the light gets through, and that
+//     fraction scales S. Where every light is visible, or none is, there is no noise at all;
+//     there is noise only where some lights are blocked and others not. The fraction is
+//     weighted toward the lights that matter, which bends the answer a little in partial
+//     shadow (the converged references show how much).
+//   plain: each pick's light divided by its chance of being picked. On average exactly
+//     what testing every light gives, with noise wherever there are several lights.
+// The shadow rays per pixel are nPicks however many lights there are.
+struct LightPick
+{
+    Light light;
+    float soft;
+    float w;      // its weight in the reservoir
+    float scale;  // how many lights it stands for (more than 1: picked from a random subset)
+};
+
+// Past this many short-lived lights, each pixel weighs this many of them chosen at random
+// (each standing for count / kDynCandidates), so the work no longer grows with the count.
+#define kDynCandidates 16u
+#define kMaxPicks 4u
+#define kBounceDynCandidates 6u
+
+float lightIrradiance(Light light, float soft, float3 lp, float3 P, float3 N, out float3 L, out float d)
+{
+    float3 toL = lp - P;
+    float d2 = dot(toL, toL);
+    d = sqrt(d2);
+    L = toL / d;
+    float NdotL = dot(N, L);
+    float x = d / light.radianceRange.w;
+    float win = saturate(1.0 - x * x * x * x);
+    win *= win;
+    if (NdotL <= 0.0 || win <= 0.0) return 0.0;
+    // (soft: +0.12 for fixtures, as directLight; short-lived lights clamp at 0.02 instead)
+    return win * NdotL / (soft > 0.0 ? d2 + soft : max(d2, 0.02));
+}
+
+void considerLight(Light light, float soft, float scale, float3 P, float3 N, float3 V, Surface s, uint nPicks,
+                   inout float3 S, inout float wsum, inout LightPick picks[kMaxPicks], inout uint seed)
+{
+    float3 L;
+    float d;
+    float e = lightIrradiance(light, soft, light.posRadius.xyz, P, N, L, d);
+    if (e <= 0.0) return;
+    float3 f = light.radianceRange.rgb * e * brdf(N, V, L, s, true) * scale;
+    float w = dot(f, float3(0.2126, 0.7152, 0.0722));
+    if (w <= 1e-8) return;
+    S += f;
+    wsum += w;
+    [unroll] for (uint k = 0; k < kMaxPicks; ++k)
+    {
+        if (k >= nPicks) break;
+        if (rnd(seed) * wsum < w)
+        {
+            picks[k].light = light;
+            picks[k].soft = soft;
+            picks[k].w = w;
+            picks[k].scale = scale;
+        }
+    }
+}
+
+float3 directLightSampled(float3 P, float3 N, float3 V, Surface s, uint nPicks, bool plain, inout uint seed)
+{
+    nPicks = clamp(nPicks, 1u, kMaxPicks);
+    LightPick picks[kMaxPicks];
+    [unroll] for (uint k = 0; k < kMaxPicks; ++k)
+    {
+        picks[k].light = (Light)0;
+        picks[k].soft = 0;
+        picks[k].w = 0;
+        picks[k].scale = 1;
+    }
+    float3 S = 0;
+    float wsum = 0.0;
+    float cs = grid.z;
+    int2 cell = int2(floor(P.x / cs + 0.5), floor(P.z / cs + 0.5));
+    int gw = int(grid.x), gh = int(grid.y);
+    for (int dy = -1; dy <= 1; ++dy)
+    for (int dx = -1; dx <= 1; ++dx)
+    {
+        int2 c = cell + int2(dx, dy);
+        if (c.x < 0 || c.y < 0 || c.x >= gw || c.y >= gh) continue;
+        uint2 range = gCells[c.y * gw + c.x];
+        for (uint i = 0; i < range.y; ++i)
+        {
+            Light light = gLights[gCellLights[range.x + i]];
+            if (dot(light.radianceRange.rgb, float3(1, 1, 1)) <= 1e-4) continue;  // dead fixture
+            considerLight(light, 0.12, 1.0, P, N, V, s, nPicks, S, wsum, picks, seed);
+        }
+    }
+    uint nd = uint(options.w);
+    if (nd <= kDynCandidates)
+    {
+        for (uint i = 0; i < nd; ++i)
+            considerLight(gDynLights[i], 0.0, 1.0, P, N, V, s, nPicks, S, wsum, picks, seed);
+    }
+    else
+    {
+        float sc = float(nd) / float(kDynCandidates);
+        for (uint i = 0; i < kDynCandidates; ++i)
+            considerLight(gDynLights[min(nd - 1u, uint(rnd(seed) * float(nd)))], 0.0, sc, P, N, V, s, nPicks, S,
+                          wsum, picks, seed);
+    }
+    if (wsum <= 0.0) return 0;
+    float3 lit = 0, all = 0;  // the picks' estimate with and without their shadow rays
+    [unroll] for (uint k = 0; k < kMaxPicks; ++k)
+    {
+        if (k >= nPicks || picks[k].w <= 0.0) continue;
+        Light light = picks[k].light;
+        float3 lp = light.posRadius.xyz + sphereSample(seed) * light.posRadius.w;
+        float3 L;
+        float d;
+        float e = lightIrradiance(light, picks[k].soft, lp, P, N, L, d);
+        if (e <= 0.0) continue;
+        float3 f = light.radianceRange.rgb * e * brdf(N, V, L, s, true) * (wsum / picks[k].w) * picks[k].scale;
+        all += f;
+        if (!occluded(P + N * 0.004, L, d - 0.02)) lit += f;
+    }
+    if (plain || dot(all, float3(1, 1, 1)) <= 1e-7) return lit / float(nPicks);
+    // ratio: the share that gets through (per colour: lights of different colours can be
+    // blocked differently), times the unshadowed light added up exactly
+    // (a colour the picks hardly carry takes the overall share instead)
+    float allL = dot(all, float3(0.2126, 0.7152, 0.0722));
+    float share = saturate(dot(lit, float3(0.2126, 0.7152, 0.0722)) / max(allL, 1e-7));
+    float3 perColour = saturate(lit / max(all, 1e-7));
+    float3 ratio = lerp(float3(share, share, share), perColour, step(0.1 * allL, all));
+    return S * ratio;
+}
+
+// What a surface hit by a bounce or reflection ray gets from the lights (no shadows, diffuse
+// only, as directLight with shadows off), with the short-lived lights sampled: one picked in
+// proportion to what it adds, divided by its chance. The fixtures (a dozen or so in the 3x3
+// cells) are all added up as before.
+float3 bounceDirectSampled(float3 P, float3 N, float3 V, Surface s, inout uint seed)
+{
+    float3 sum = 0;
+    float cs = grid.z;
+    int2 cell = int2(floor(P.x / cs + 0.5), floor(P.z / cs + 0.5));
+    int gw = int(grid.x), gh = int(grid.y);
+    float3 L;
+    float d;
+    for (int dy = -1; dy <= 1; ++dy)
+    for (int dx = -1; dx <= 1; ++dx)
+    {
+        int2 c = cell + int2(dx, dy);
+        if (c.x < 0 || c.y < 0 || c.x >= gw || c.y >= gh) continue;
+        uint2 range = gCells[c.y * gw + c.x];
+        for (uint i = 0; i < range.y; ++i)
+        {
+            Light light = gLights[gCellLights[range.x + i]];
+            float e = lightIrradiance(light, 0.12, light.posRadius.xyz, P, N, L, d);
+            if (e > 0.0) sum += light.radianceRange.rgb * e * brdf(N, V, L, s, false);
+        }
+    }
+    uint nd = uint(options.w);
+    float wsum = 0.0, wPick = 0.0;
+    float3 cPick = 0, lPick = N;
+    // (past kBounceDynCandidates, a random few, each standing for nd / that many)
+    const bool subset = nd > kBounceDynCandidates;
+    const uint count = subset ? kBounceDynCandidates : nd;
+    const float sc = subset ? float(nd) / float(kBounceDynCandidates) : 1.0;
+    for (uint i = 0; i < count; ++i)
+    {
+        Light light = gDynLights[subset ? min(nd - 1u, uint(rnd(seed) * float(nd))) : i];
+        float e = lightIrradiance(light, 0.0, light.posRadius.xyz, P, N, L, d);
+        float3 c = light.radianceRange.rgb * e * sc;
+        float w = dot(c, float3(0.2126, 0.7152, 0.0722));
+        if (w <= 1e-8) continue;
+        wsum += w;
+        if (rnd(seed) * wsum < w)
+        {
+            wPick = w;
+            cPick = c;
+            lPick = L;
+        }
+    }
+    if (wPick > 0.0) sum += cPick * (wsum / wPick) * brdf(N, V, lPick, s, false);
+    return sum;
+}
+
 // Spot cone weight of the flashlight toward direction -L (from the light to the point).
 float flashSpot(float3 L)
 {
@@ -433,7 +620,9 @@ float3 bounceRadiance(Hit h, float3 dir, float clampTo, inout uint seed)
     if (!h.hit) return options.y;
     if (!h.front) return 0;  // inside the back of a wall
     Surface s = surfaceAt(h);
-    float3 L = s.emissive + directLight(h.P, h.N, -dir, s, false, false, seed) + s.albedo * options.y;
+    float3 lit = hazeParams.w >= 1.0 ? bounceDirectSampled(h.P, h.N, -dir, s, seed)
+                                     : directLight(h.P, h.N, -dir, s, false, false, seed);
+    float3 L = s.emissive + lit + s.albedo * options.y;
     L += flashLight(h.P, h.N, -dir, s, true, false);
     // Small, very bright emitters (light panels) found by a random secondary ray are
     // fireflies at low sample counts: clamp what one path can carry.
@@ -447,7 +636,12 @@ float3 shade(Hit h, float3 dir, inout uint seed)
     float3 N = h.N;
     bool rt = options.x > 0.5;
     float3 c = s.emissive;
-    c += directLight(h.P, N, V, s, rt, true, seed);
+    // round 18: sampled (hazeParams.w lights picked per pixel), or every light in range
+    // (hazeParams.w: picks, plus 8 for the plain estimator)
+    if (rt && hazeParams.w >= 1.0)
+        c += directLightSampled(h.P, N, V, s, uint(hazeParams.w) & 7u, uint(hazeParams.w) >= 8u, seed);
+    else
+        c += directLight(h.P, N, V, s, rt, true, seed);
     c += flashLight(h.P, N, V, s, rt, true);
     if (!rt)
         return c + s.albedo * 0.035 * (1.0 - s.metallic) + options.y;

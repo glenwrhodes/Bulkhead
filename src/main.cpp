@@ -89,6 +89,8 @@ void applyGame(FrameSettings& s, const Game& game, const Options& o) {
     s.dynamicLights = &game.dynamicLights();
     s.steam = &game.steamPlumes();
     s.scan = game.scanState();
+    s.lightPicks = o.lights == "all" ? 0 : o.lightPicks;
+    s.plainEstimator = o.lights == "plain";
 }
 
 // The scripted shooting scene (--scene fire): standing in a corridor, six shots at the
@@ -296,6 +298,7 @@ int runWeave(const Options& o, const fs::path& dir) {
     loadKit(kit, o);
     Game game(kit, mazeParams(o, seed));
     game.setFlashlight(o.flashlight);
+    game.setLightCaps(o.lightCapsOn());
     describe(game);
     const OverheadMap map = gameMap(game);
     Camera start = sceneCamera(game, "corridor");
@@ -421,6 +424,7 @@ int runCapture(const Options& o) {
     loadKit(kit, o);
     Game game(kit, mazeParams(o, seed));
     game.setFlashlight(o.flashlight);
+    game.setLightCaps(o.lightCapsOn());
     describe(game);
     overheadFor(game.maze(), game.level().sections, o.cellPx).image.writePng(dir / "overhead.png");
     const OverheadMap map = gameMap(game);
@@ -483,7 +487,20 @@ int runCapture(const Options& o) {
         log::info("Scene 'scanner': up to {:.1f} s, holding the junction at cell ({}, {}) in a {} section, {} creatures",
                   game.scannerSceneLength(), j.x, j.y, toString(game.moodAtCamera()), game.hunters().size());
     }
+    const bool glowScene = o.scene == "glow";
+    if (glowScene) {
+        game.setHuntTuning(huntTuning(o));
+        if (!game.setupGlowScene()) {
+            log::error("Scene 'glow': no straight corridor for it (or no creature)");
+            return 1;
+        }
+        log::info("Scene 'glow': {:.1f} s in a {} section, {} creatures; lights {}{}, light caps {}",
+                  game.glowSceneLength(), toString(game.moodAtCamera()), game.hunters().size(), o.lights,
+                  o.temporal ? " (rendered as the window does: 1 sample a frame plus history)" : "",
+                  game.lightCaps() ? "on" : "off");
+    }
     const float sceneLength = fireScene    ? FireScene::kDuration
+                              : glowScene  ? game.glowSceneLength()
                               : crawlScene ? game.crawlDuration()
                               : huntScene  ? game.huntSceneLength()
                               : scanScene  ? game.scannerSceneLength()
@@ -522,6 +539,9 @@ int runCapture(const Options& o) {
         } else if (scanScene) {
             game.stepScannerScene(t, dt);
             return;
+        } else if (glowScene) {
+            game.stepGlowScene(t, dt);
+            return;
         } else {
             game.setWalkTime(t);
         }
@@ -551,6 +571,7 @@ int runCapture(const Options& o) {
     float exitFlash = 0.0f;
     int written = 0;
     std::string lastHuntLog;
+    std::vector<double> frameMs;  // render + read back, per frame
     for (int i = 0; i < frames; ++i) {
         const float t = o.start + float(i) * dt;
         if (huntScene && game.huntSceneDone(t)) break;
@@ -594,8 +615,20 @@ int runCapture(const Options& o) {
         s.redout = game.redout();
         s.blackout = game.blackout();
         if (game.playerDead()) s.hud = false;
+        if (o.temporal) {
+            // as the window renders: one sample, blended into the reprojected history (short
+            // when the lights flicker or a creature is close, as the window keeps it)
+            bool hunterNear = false;
+            for (const Hunter& hh : game.hunters())
+                hunterNear = hunterNear || (hh.alive() && length(hh.headPosition() - game.camera().position) < 14.0f);
+            s.samples = 1;
+            s.resetHistory = i == 0;
+            s.maxHistory = game.lightingChange() > 0.15f ? 3 : hunterNear ? 6 : 16;
+        }
         const fs::path file = dir / std::format("frame_{:04}.png", i + 1);
+        const auto renderStart = std::chrono::steady_clock::now();
         Image frame = renderer.renderToImage(instances, s);
+        frameMs.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - renderStart).count());
         if (climbScene && o.overlay) {
             // the crawl's machinery drawn over the same frame (src/game/CrawlOverlay.h)
             const Game::ClimbInfo ci = game.climbInfo();
@@ -626,6 +659,13 @@ int runCapture(const Options& o) {
     if (writeFailed) {
         log::error("Could not write frames to {}", dir.string());
         return 1;
+    }
+    if (!frameMs.empty()) {
+        std::vector<double> v = frameMs;
+        std::sort(v.begin(), v.end());
+        log::info("Render time a frame ({} sample{}, including the read back): median {:.2f} ms, 95th {:.2f} ms, "
+                  "lights {}", o.temporal ? 1 : std::max(2, o.spp), o.temporal ? "" : "s", v[v.size() / 2],
+                  v[v.size() * 95 / 100], o.lights);
     }
     if (audio) {
         std::vector<std::string> lines;
@@ -659,6 +699,7 @@ int runShots(const Options& o) {
     loadKit(kit, o);
     Game game(kit, mazeParams(o, seed));
     game.setFlashlight(o.flashlight);
+    game.setLightCaps(o.lightCapsOn());
     describe(game);
     overheadFor(game.maze(), game.level().sections, o.cellPx).image.writePng(dir / "overhead.png");
     const OverheadMap map = gameMap(game);
@@ -713,6 +754,7 @@ int runBench(const Options& o) {
     loadKit(kit, o);
     Game game(kit, mazeParams(o, o.seed.value_or(kDefaultSeed)));
     game.setFlashlight(o.flashlight);
+    game.setLightCaps(o.lightCapsOn());
     describe(game);
     const OverheadMap map = gameMap(game);
     Gpu gpu(o.debugLayer);
@@ -966,6 +1008,7 @@ int runInteractive(const Options& o) {
     auto newShip = [&] {
         game = std::make_unique<Game>(kit, mazeParams(o, seed));
         game->setFlashlight(flashlight);
+        game->setLightCaps(o.lightCapsOn());
         game->setHuntTuning(huntTuning(o));
         game->spawnHunters(game->huntTuning().creatures);
         describe(*game);

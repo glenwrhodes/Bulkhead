@@ -25,7 +25,7 @@ Custom C++20 engine on DirectX 12 with DXR ray tracing (RTX 4090 Laptop GPU, ray
 | 13 | Round 12: viewports into space on the ship's edge (Blender piece built in steps, stars, glass that reflects), the window film | **Done (round 12)**: see Viewports |
 | 14 | Round 13: sound (mixer, window output, WAV beside every capture, ~25 sounds, credits) | **Done (round 13)**: see Sound |
 | 15 | Round 14: the approach (crawl in on walls and ceiling, stop, hiss, crouch, leap from any surface), turning round without a snap | **Done (round 14)**: see The approach |
-| 16 | Round 15: lights without a cap: sample a few lights per pixel by importance instead of shadow-testing all of them (see Viewports, "How many lights") | Proposed |
+| 16 | Round 15 (built as round 18): lights without a cap: sample a few lights per pixel by importance instead of shadow-testing all of them | Done (see "Sampled lighting") |
 | 17 | Round 16: the threat filmed close; the climbing film, plain and with the crawl overlay (see "The climb") | Done |
 | 18 | Round 17: the motion scanner (blips on the minimap and map), the scanner film; the legs 20% slower | Done (see "The motion scanner") |
 | 19 | Round 18: final pass (re-measure, every film with sound) | Planned |
@@ -380,7 +380,7 @@ step for the video.
   - Round 11 kept the creatures' glow lights to the three nearest.
   - Without a cap, ten creatures piled on the camera in the bench took the median from 7 to
     12 ms (15 ms in dark sections).
-- **The fix** (round 15, proposed): sample lights instead of testing them all. For each pixel,
+- **The fix** (proposed here, built in round 18: see "Sampled lighting"): sample lights instead of testing them all. For each pixel,
   pick one or two lights at random in proportion to how much each could add there (unshadowed),
   send shadow rays only to those, and divide by the chance of picking them. The temporal history
   (window) and the sub-frames (captures) average out the extra noise.
@@ -593,6 +593,90 @@ seed, same timing, frame for frame, so the two cut together.
   chained at their rest spacing from the pelvis back. This affects every creature film a
   little; `film_threat` and both climb films were rendered after it, `film_approach`, hunt and
   fight before.
+
+## Sampled lighting (round 18)
+
+Glen: "Why is there a light cap if we're in RTX? The lighting is calculated per-pixel so
+number of lights really doesn't matter." It did matter: every light in range cost one shadow
+ray on every pixel it reached. Now it mostly doesn't.
+
+**What each pixel does now** (`directLightSampled` in `trace.hlsl`, at the surface the camera
+sees):
+1. **Weigh every light, without rays.** For each fixture in the 3 × 3 cells and each
+   short-lived light: what it would add here if nothing were in the way (power, distance,
+   range, angle, the surface's BRDF). These add up to the unshadowed light S, exactly.
+   (Past 16 short-lived lights, a random 16 of them are weighed, each standing for its share.)
+2. **Pick two at random**, each in proportion to what it adds (weighted reservoir sampling:
+   one pass, no list). A light adding 60% of S is picked 60% of the time.
+3. **Shadow-test only those two**, each to a random point on the light (soft shadows).
+4. **Scale:** the two picks say what share of the light gets through (per colour), and that
+   share multiplies S. Where all the lights are visible, or none are, the answer is exact and
+   there is no noise; there is noise only where some lights are blocked and others not.
+5. The frames' history (window) and sub-frames (captures) average the noise away.
+
+Bounce and reflection rays (which never had shadow rays to lights) add up the fixtures as
+before and pick one short-lived light in proportion to what it adds (`bounceDirectSampled`).
+
+**Switches:** `--lights all` is the old shading (every light in range tested, the code kept
+as it was), and with it the old caps come back (`--light-caps on|off`, default on with
+`all`). `--lights plain` is the textbook estimator (each pick divided by its chance; exactly
+right on average, noisier). `--light-picks 1-4` (default 2).
+
+**The caps are gone** in the default: every creature within 60 m lights its surroundings
+(was: the 3 nearest within 30 m), and up to 128 short-lived lights reach the renderer (was 16).
+
+**Cost** (`light_cost_N` / `light_cost_all_N`, label `diag`: the same 15 s of the walk at
+1080p, N extra lights in a ring 2 m round the camera, median frame, this run of both):
+
+| Extra lights in range | 0 | 4 | 8 | 16 | 32 | 64 | 120 |
+|---|---|---|---|---|---|---|---|
+| Every light tested (before) | 8.4 ms | 9.4 ms | 10.3 ms | 12.4 ms | 16.6 ms | 25.0 ms | 41.1 ms |
+| Sampled, 2 picks (now) | 6.2 ms | 6.5 ms | 6.7 ms | 6.9 ms | 7.1 ms | 7.2 ms | 7.7 ms |
+| Sampled, 1 pick | 6.0 ms | | | | 7.0 ms | | 7.2 ms |
+| Sampled, 4 picks | 7.0 ms | | | | 7.7 ms | | 8.1 ms |
+
+(The table in "How many lights" was 8.8 / 10.2 / 10.9 / 13.9 / 17.9 ms on the code of round 12.)
+Each extra light used to cost ~0.27 ms; now ~0.013 ms: the remaining cost is weighing it,
+not tracing. With none extra it is 2.2 ms faster too, because the fixtures (11 lit in range
+on average) are no longer each a shadow ray.
+
+**The real game** (`bench_creatures*`, label `bench`: the whole walk, ten creatures hunting it):
+
+| | Median | 95th | Creature in view (median) |
+|---|---|---|---|
+| Before: every light, capped (`bench_creatures_all`) | 7.07 ms | 9.51 ms | 8.68 ms |
+| Every light, no caps (`bench_creatures_all_uncapped`) | 7.26 ms | 9.62 ms | 8.75 ms |
+| Now: sampled, no caps (`bench_creatures`) | 5.89 ms | 7.79 ms | 6.41 ms |
+
+(The bench's creatures are mostly far off and dark sections have few fixtures, so lifting the
+caps alone costs little here; the ring test above is the hard case. Dark sections: 5.92 vs
+5.83 ms, no gain: there is little to sample.)
+
+**Same picture on average:** `glow_ref_all`, `glow_ref_sampled`, `glow_ref_plain` (diag; 256
+samples, the camera still, ten creatures lit) look the same.
+
+**Films** (`--scene glow`, 14 s, seed 1234: ten creatures crawling about a dark corridor,
+flashlight off, so their glow is most of the light; still for 3 s, then walking slowly up it
+looking from side to side; rendered with `--temporal`, i.e. as the window renders: one sample
+a frame plus history, so the noise shows):
+- `film_glow_capped`: the game before this round: only the three nearest creatures cast light.
+- `film_glow_all`: every light tested, all ten lit: the reference look (32-43 ms a frame here).
+- `film_glow_sampled`: now (31 ms a frame here: these renders also read each frame back).
+- `glow_plain` (diag): the textbook estimator, for comparison: fine grain over every wall.
+
+**What the noise looks like, and where it is worse:**
+- Walls and floor lit by many creatures at once: as clean as testing every light (frame 250).
+- The creatures' own bodies, close up: grainier than with every light tested (frame 380).
+  Their glow lights sit inside and between their own plates and legs, so each light is partly
+  blocked, the one case the share estimate can't remove. The grain is a fine speckle that the
+  history settles within a few frames when the camera holds still; while walking past a
+  creature at 1-2 m it stays visible (the window keeps only 6 frames of history with a
+  creature within 14 m). Testing every light has some of it too, less.
+- Partial shadows from many lights at once (a leg's shadow cast by one creature's glow while
+  another lights the same wall) can be a little off in the share estimate before averaging,
+  though the converged references don't show it.
+- One or two picks can miss a weak light that matters at a dim pixel; that is noise, not loss:
+  it shows as speckle in the darkest corners, and averages out.
 
 ## Slower legs (round 17)
 

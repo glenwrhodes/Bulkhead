@@ -121,12 +121,16 @@ bulkhead_png_test(bench smoke
 add_test(NAME bench_static COMMAND Bulkhead --bench "${CAP}/bench_static" --res 1280x720 --frames 240 --start 1000 --seed 1234)
 set_tests_properties(bench_static PROPERTIES LABELS diag)
 
-# What each short-lived light costs: the same 15 s of the walk at 1080p with 0..32 extra
+# What each short-lived light costs: the same 15 s of the walk at 1080p with 0..120 extra
 # lights in a ring 2 m round the camera (most pixels within their range). Label "diag".
-foreach(n 0 4 8 16 32)
+# light_cost_N: sampled lighting (round 18); light_cost_all_N: every light shadow-tested.
+foreach(n 0 4 8 16 32 64 120)
   add_test(NAME light_cost_${n} COMMAND Bulkhead --bench "${CAP}/light_cost_${n}" --res 1920x1080 --start 60
            --frames 900 --seed 1234 --test-lights ${n})
   set_tests_properties(light_cost_${n} PROPERTIES LABELS diag RUN_SERIAL TRUE)
+  add_test(NAME light_cost_all_${n} COMMAND Bulkhead --bench "${CAP}/light_cost_all_${n}" --res 1920x1080 --start 60
+           --frames 900 --seed 1234 --test-lights ${n} --lights all)
+  set_tests_properties(light_cost_all_${n} PROPERTIES LABELS diag RUN_SERIAL TRUE)
 endforeach()
 
 # The timing run: window-mode rendering over the whole start -> exit walk of the 40 x 40
@@ -158,6 +162,14 @@ bulkhead_png_test(bench_creatures_original bench
 bulkhead_png_test(bench_creatures bench
   GAME  --bench "${CAP}/bench_creatures" --res 1920x1080 --seed 1234 --creatures 10
   CHECK --file "${CAP}/bench_creatures/frame_final.png" --width 1920 --height 1080)
+# The same with the lighting before round 18 (every light tested, the light caps on).
+bulkhead_png_test(bench_creatures_all bench
+  GAME  --bench "${CAP}/bench_creatures_all" --res 1920x1080 --seed 1234 --creatures 10 --lights all
+  CHECK --file "${CAP}/bench_creatures_all/frame_final.png" --width 1920 --height 1080)
+# ... and every light tested without the caps (what the caps were holding off).
+bulkhead_png_test(bench_creatures_all_uncapped bench
+  GAME  --bench "${CAP}/bench_creatures_all_uncapped" --res 1920x1080 --seed 1234 --creatures 10 --lights all --light-caps off
+  CHECK --file "${CAP}/bench_creatures_all_uncapped/frame_final.png" --width 1920 --height 1080)
 
 # --- package ----------------------------------------------------------------
 # The download: build the zip, unpack it into an empty folder, and run the game from
@@ -243,6 +255,43 @@ set_tests_properties(climb_preview PROPERTIES LABELS diag RUN_SERIAL TRUE)
 bulkhead_png_test(film_threat film
   GAME  --capture "${CAP}/threat" --scene threat --res 1920x1080 --fps 30 --spp 16 --seed ${FILM_SEED}
   CHECK --dir "${CAP}/threat" --at-least 150 --width 1920 --height 1080 --expect-motion)
+
+# Sampled lighting (round 18): ten creatures' glow lighting a dark corridor, rendered as
+# the window does (1 sample a frame plus history, --temporal) so the noise shows.
+#   glow_capped:  the game before round 18 (every light tested; only 3 creatures' glow lit)
+#   glow_all:     every light tested, all ten lit (the old shading without its caps)
+#   glow_sampled: two lights picked per pixel, all ten lit (now)
+bulkhead_png_test(film_glow_capped film
+  GAME  --capture "${CAP}/glow_capped" --scene glow --lights all --temporal --res 1920x1080 --fps 30 --seed ${FILM_SEED} --no-hud
+  CHECK --dir "${CAP}/glow_capped" --at-least 400 --width 1920 --height 1080 --expect-motion)
+bulkhead_png_test(film_glow_all film
+  GAME  --capture "${CAP}/glow_all" --scene glow --lights all --light-caps off --temporal --res 1920x1080 --fps 30 --seed ${FILM_SEED} --no-hud
+  CHECK --dir "${CAP}/glow_all" --at-least 400 --width 1920 --height 1080 --expect-motion)
+bulkhead_png_test(film_glow_sampled film
+  GAME  --capture "${CAP}/glow_sampled" --scene glow --temporal --res 1920x1080 --fps 30 --seed ${FILM_SEED} --no-hud
+  CHECK --dir "${CAP}/glow_sampled" --at-least 400 --width 1920 --height 1080 --expect-motion)
+# The sampled film with the plain estimator (each pick divided by its chance), for comparison.
+add_test(NAME glow_plain COMMAND Bulkhead --capture "${CAP}/glow_plain" --scene glow --temporal --lights plain
+         --res 1920x1080 --fps 30 --seed ${FILM_SEED} --no-hud)
+set_tests_properties(glow_plain PROPERTIES LABELS diag RUN_SERIAL TRUE)
+# The sampled film with 1 and 4 picks instead of 2, and their cost (label "diag").
+foreach(p 1 4)
+  add_test(NAME glow_sampled_picks${p} COMMAND Bulkhead --capture "${CAP}/glow_sampled_picks${p}" --scene glow --temporal
+           --light-picks ${p} --res 1920x1080 --fps 30 --seed ${FILM_SEED} --no-hud)
+  set_tests_properties(glow_sampled_picks${p} PROPERTIES LABELS diag RUN_SERIAL TRUE)
+  foreach(n 0 32 120)
+    add_test(NAME light_cost_picks${p}_${n} COMMAND Bulkhead --bench "${CAP}/light_cost_picks${p}_${n}" --res 1920x1080
+             --start 60 --frames 900 --seed 1234 --test-lights ${n} --light-picks ${p})
+    set_tests_properties(light_cost_picks${p}_${n} PROPERTIES LABELS diag RUN_SERIAL TRUE)
+  endforeach()
+endforeach()
+# The same moment converged (256 samples, the camera still at 2 s), both ways: on average
+# the sampled lighting must give the same picture. Label "diag".
+foreach(mode all sampled plain)
+  add_test(NAME glow_ref_${mode} COMMAND Bulkhead --capture "${CAP}/glow_ref_${mode}" --scene glow --lights ${mode}
+           --light-caps off --start 2 --frames 1 --spp 256 --res 1920x1080 --seed ${FILM_SEED} --no-hud)
+  set_tests_properties(glow_ref_${mode} PROPERTIES LABELS diag RUN_SERIAL TRUE)
+endforeach()
 
 # The motion scanner (round 17): you hold a junction; blips close in on the minimap from
 # three ways until one comes into view at the end of the corridor ahead. Ping in audio.wav.

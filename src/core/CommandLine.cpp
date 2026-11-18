@@ -56,8 +56,15 @@ std::string usageText() {
         "  --runs SxV        encounters: S ships x V runs on each (default 10x3)\n"
         "  --minutes M       encounters: length of each run (default 10)\n"
         "  --sweep           encounters: try a grid of creature counts, drift timings and hearing\n"
-        "  --test-lights N   bench: add N small short-lived lights in a ring round the camera (what\n"
-        "                    each one costs per frame)\n"
+        "  --test-lights N   bench: add N (up to 120) small short-lived lights in a ring round the\n"
+        "                    camera (what each one costs per frame)\n"
+        "  --lights MODE     sampled (default): each pixel shadow-tests two lights picked by how much\n"
+        "                    they could add, for the share of the light that gets through; plain: the\n"
+        "                    same picks, each divided by its chance (unbiased, noisier); all: every\n"
+        "                    light in range shadow-tested (before round 18)\n"
+        "  --light-picks N   sampled lighting: lights shadow-tested per pixel, 1-4 (default 2)\n"
+        "  --light-caps on|off  keep 16 short-lived lights and light only the 3 nearest creatures'\n"
+        "                    glow (default: on with --lights all, off with sampled)\n"
         "  --scene approach  capture: you stand still; a creature that has spotted you closes in\n"
         "                    and leaps (the real AI; with --hunt original, as before round 13)\n"
         "  --scene threat    capture: the approach in a lit corridor, the creature on the ceiling,\n"
@@ -66,6 +73,10 @@ std::string usageText() {
         "                    and back down, from close camera setups (--overlay: the system drawn on it)\n"
         "  --scene scanner   capture: you hold a junction; the motion scanner shows three creatures\n"
         "                    closing in from different ways until one comes into view ahead\n"
+        "  --scene glow      capture: ten creatures crawl about a dark corridor, ignoring you, their\n"
+        "                    glow the main light (for comparing --lights all / sampled)\n"
+        "  --temporal        capture: render each frame as the window does (1 sample, the history of\n"
+        "                    earlier frames), so its noise shows; --spp is ignored\n"
         "  --scene window    capture: walk up to a viewport on the ship's edge, the stars outside,\n"
         "                    the creature crawling past behind you in the glass, turn to face it\n"
         "  --scene weave     capture: the window's movement code, forward held, down a straight\n"
@@ -118,7 +129,8 @@ std::optional<Options> parseCommandLine(int argc, char** argv, std::string& erro
             auto v = value();
             if (!v) return std::nullopt;
             if (*v != "walk" && *v != "fire" && *v != "crawl" && *v != "hunt" && *v != "fight" && *v != "weave" &&
-                *v != "window" && *v != "approach" && *v != "threat" && *v != "climb" && *v != "scanner")
+                *v != "window" && *v != "approach" && *v != "threat" && *v != "climb" && *v != "scanner" &&
+                *v != "glow")
                 return bad(*v);
             o.scene = std::string(*v);
         } else if (a == "--assets") {
@@ -196,14 +208,33 @@ std::optional<Options> parseCommandLine(int argc, char** argv, std::string& erro
             else return bad(*v);
             if (a == "--rt") o.rayTracing = on;
             else o.flashlight = on;
+        } else if (a == "--light-caps") {
+            auto v = value();
+            if (!v) return std::nullopt;
+            if (*v == "on") o.lightCaps = true;
+            else if (*v == "off") o.lightCaps = false;
+            else return bad(*v);
+        } else if (a == "--light-picks") {
+            auto v = value();
+            int n = 0;
+            if (!v) return std::nullopt;
+            if (!parseNumber(*v, n) || n < 1 || n > 4) return bad(*v);
+            o.lightPicks = n;
+        } else if (a == "--lights") {
+            auto v = value();
+            if (!v) return std::nullopt;
+            if (*v != "sampled" && *v != "all" && *v != "plain") return bad(*v);
+            o.lights = std::string(*v);
         } else if (a == "--test-lights") {
             auto v = value();
             int n = 0;
             if (!v) return std::nullopt;
-            if (!parseNumber(*v, n) || n < 0 || n > 32) return bad(*v);
+            if (!parseNumber(*v, n) || n < 0 || n > 120) return bad(*v);
             o.testLights = n;
         } else if (a == "--overlay") {
             o.overlay = true;
+        } else if (a == "--temporal") {
+            o.temporal = true;
         } else if (a == "--sweep") {
             o.sweep = true;
         } else if (a == "--no-hud") {

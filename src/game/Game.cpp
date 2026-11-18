@@ -13,7 +13,8 @@ constexpr float kSparkSlot = 0.45f;    // spark emitters may burst once per slot
 constexpr float kSparkLife = 1.1f;     // a burst's sparks are all gone after this
 constexpr float kSteamSlot = 3.2f;     // steam hisses on or off per slot
 constexpr float kEffectRange = 24.0f;  // effects farther than this from the camera are skipped
-constexpr int kMaxDynamicLights = 16;
+constexpr int kMaxDynamicLights = 16;          // with the light caps (before round 18)
+constexpr int kMaxDynamicLightsUncapped = 128; // the renderer's buffer
 
 float yawToward(Vec3 from, Vec3 to) {
     Vec3 d = to - from;
@@ -307,18 +308,20 @@ void Game::updateEffects() {
             dynamic_.push_back({im.position + im.normal * 0.15f, col * (9.0f * f * f), 0.03f, 8.0f});
         }
     }
-    // each hunter's glow lights its surroundings a little (the throat and seams): the three
-    // nearest within 30 m (each light costs shadow rays on every pixel in its range, and with
-    // ten loose several can close in at once; the rest still glow, they just cast no light)
+    // each hunter's glow lights its surroundings a little (the throat and seams). With the
+    // light caps (the lighting before round 18, when every light in range cost shadow rays on
+    // every pixel it reached): only the three nearest within 30 m. Without them (sampled
+    // lighting: the cost no longer grows with the lights): every one within 60 m.
     std::vector<std::pair<float, size_t>> lit;
+    const float litRange = lightCaps_ ? 30.0f : 60.0f;
     for (size_t i = 0; i < hunters_.size(); ++i) {
         const Hunter& h = hunters_[i];
         if (h.state() == HunterState::Dead || h.glow() < 0.05f) continue;
         const Vec3 d = h.headPosition() - cam;
-        if (dot(d, d) <= 30.0f * 30.0f) lit.push_back({dot(d, d), i});
+        if (dot(d, d) <= litRange * litRange) lit.push_back({dot(d, d), i});
     }
     std::sort(lit.begin(), lit.end());
-    if (lit.size() > 3) lit.resize(3);
+    if (lightCaps_ && lit.size() > 3) lit.resize(3);
     for (const auto& near : lit) {
         const Hunter& h = hunters_[near.second];
         dynamic_.push_back({h.headPosition(), Vec3{1.0f, 0.45f, 0.1f} * (0.9f * h.glow()), 0.08f, 5.0f});
@@ -339,7 +342,8 @@ void Game::updateEffects() {
     };
     std::sort(dynamic_.begin(), dynamic_.end(),
               [&](const DynamicLight& a, const DynamicLight& b) { return weight(a) > weight(b); });
-    if (int(dynamic_.size()) > kMaxDynamicLights) dynamic_.resize(size_t(kMaxDynamicLights));
+    const int most = lightCaps_ ? kMaxDynamicLights : kMaxDynamicLightsUncapped;
+    if (int(dynamic_.size()) > most) dynamic_.resize(size_t(most));
 }
 
 void Game::addSparks(std::vector<SceneInstance>& out, Vec3 origin, Vec3 dir, float age, uint32_t seed, int count,
@@ -559,7 +563,7 @@ HuntWorld Game::huntWorld(bool shot) const {
     w.doorOpen = &doorOpen_;
     w.player = camera_.position;
     w.playerForward = camera_.forward();
-    w.playerAlive = !playerDead();
+    w.playerAlive = !playerDead() && !huntersIgnorePlayer_;
     w.shotFired = shot;
     w.grabbable = !invulnerable_;
     w.time = time_;
@@ -1559,6 +1563,106 @@ void Game::stepScannerScene(float t, float dt) {
         }
     }
     if (playerDead() && scan_.endAt < 0.0f) scan_.endAt = t + 3.0f;
+}
+
+// ---------------------------------------------------------------------------
+// The glow scene (round 18): ten creatures lighting a dark corridor
+// ---------------------------------------------------------------------------
+
+bool Game::setupGlowScene() {
+    const Maze& m = maze_;
+    const int W = m.width();
+    auto step = [](Int2 c, int d) { return Int2{c.x + kDx[d], c.y + kDy[d]}; };
+    auto straightAlong = [&](Int2 c, int d) {
+        if (!m.inBounds(c) || m.kind(c) != CellKind::Corridor) return false;
+        return m.passable(c.x, c.y, Dir(d)) && m.passable(c.x, c.y, Dir((d + 2) & 3)) &&
+               !m.passable(c.x, c.y, Dir((d + 1) & 3)) && !m.passable(c.x, c.y, Dir((d + 3) & 3));
+    };
+    // a long straight corridor where the fixtures give little light
+    int bestScore = -100000, bestD = 0;
+    std::vector<Int2> best;
+    for (int y = 0; y < m.height(); ++y)
+        for (int x = 0; x < W; ++x)
+            for (int d = 0; d < 4; ++d) {
+                Int2 c{x, y};
+                if (!straightAlong(c, d) || straightAlong(step(c, (d + 2) & 3), d)) continue;
+                std::vector<Int2> run;
+                while (straightAlong(c, d)) run.push_back(c), c = step(c, d);
+                if (run.size() < 5) continue;
+                const Mood mood = level_.sections.moodAt(run[run.size() / 2]);
+                int score = int(std::min<size_t>(run.size(), 7)) * 4 +
+                            (mood == Mood::Dark ? 60 : mood == Mood::Derelict ? 30 : mood == Mood::Dim ? 15 : -40);
+                for (size_t k = 0; k < std::min<size_t>(run.size(), 7); ++k) {
+                    const Int2 r = run[k];
+                    for (const LowPipe& lp : level_.lowPipes)
+                        if (std::abs(lp.center.x - cellCenter(r).x) < 2.1f && std::abs(lp.center.z - cellCenter(r).z) < 2.1f)
+                            score -= 1000;
+                    // fixtures still burning in it or beside it (and beacons) light it over the glow
+                    for (int ny = -1; ny <= 1; ++ny)
+                        for (int nx = -1; nx <= 1; ++nx) {
+                            const int x2 = r.x + nx, y2 = r.y + ny;
+                            if (x2 < 0 || y2 < 0 || x2 >= level_.gridW || y2 >= level_.gridH) continue;
+                            const size_t ci = size_t(y2 * level_.gridW + x2);
+                            for (uint32_t q = 0; q < level_.cellCount[ci]; ++q) {
+                                const uint32_t li = level_.cellLights[level_.cellStart[ci] + q];
+                                const Vec3 now = lightRadiance_[li], full = level_.lights[li].radiance;
+                                if (level_.lights[li].beacon || now.x + now.y + now.z > 0.1f * (full.x + full.y + full.z))
+                                    score -= (nx == 0 && ny == 0) ? 25 : 8;
+                            }
+                        }
+                }
+                if (score > bestScore) bestScore = score, best = run, bestD = d;
+            }
+    if (best.empty()) return false;
+    if (best.size() > 7) best.resize(7);
+    glow_ = GlowScene{};
+    glow_.run = best;
+    glow_.dir = dirVector(Dir(bestD));
+    glow_.start = cellCenter(best[0]) + Vec3{0, kEyeHeight, 0} - glow_.dir * 1.5f;
+    glow_.yaw = std::atan2(-glow_.dir.x, -glow_.dir.z);
+    camera_ = Camera{};
+    sway_ = {};
+    camera_.position = glow_.start;
+    camera_.yaw = glow_.yaw;
+    camera_.pitch = 0.04f;
+    flashlightOn_ = false;  // (their glow is the light)
+    hunters_.clear();
+    respawnAt_.clear();
+    huntersWanted_ = 0;
+    huntersIgnorePlayer_ = true;
+    // ten of them in the corridor beyond the first two cells: two to a cell, one on the
+    // ceiling and one on a wall or the floor (round the run again if it is short)
+    const int lower[3] = {1, 0, 3};
+    for (size_t i = 0; hunters_.size() < 10 && i < 40; ++i) {
+        const size_t cellIdx = 1 + (i / 2) % std::min<size_t>(best.size() - 1, 4);
+        const int surf = i % 2 == 0 ? 2 : lower[(i / 2) % 3];
+        spawnHunterAt(best[cellIdx], surf, maze_.params().seed * 389u + uint64_t(i) * 11u + 3u);
+    }
+    glow_.retarget.assign(hunters_.size(), 0.0f);
+    for (size_t i = 0; i < hunters_.size(); ++i) glow_.retarget[i] = 0.2f + 0.37f * float(i);
+    return hunters_.size() == 10;
+}
+
+void Game::stepGlowScene(float t, float dt) {
+    // each creature heads for another cell of the corridor now and then, over a wall or
+    // the ceiling, so they keep crossing the view
+    for (size_t i = 0; i < hunters_.size(); ++i) {
+        if (t < glow_.retarget[i]) continue;
+        const uint32_t h = mix32(uint32_t(i) * 7919u + uint32_t(t * 10.0f) * 104729u + 99u);
+        const Int2 goal = glow_.run[1 + h % uint32_t(glow_.run.size() - 1)];
+        const int surf[4] = {2, 1, 3, 2};
+        hunters_[i].headFor(maze_, goal, surf[(h >> 8) % 4]);
+        glow_.retarget[i] = t + 3.5f + 2.0f * unit(mix32(h));
+    }
+    // still for 3 s, then walking slowly up the corridor, looking from side to side
+    const float walk = std::max(0.0f, t - 3.0f);
+    const float along = 0.45f * walk;
+    const float look = walk > 0.0f ? 0.42f * std::sin(walk * 0.75f) : 0.0f;
+    camera_.position = glow_.start + glow_.dir * along + Vec3{0, 0.012f * std::sin(along / 0.6f * kPi), 0};
+    camera_.yaw = glow_.yaw + look;
+    camera_.pitch = 0.04f + 0.05f * std::sin(t * 0.4f);
+    sway_ = {};
+    stepWorld(dt);
 }
 
 // ---------------------------------------------------------------------------
