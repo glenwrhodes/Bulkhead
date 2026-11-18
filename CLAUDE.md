@@ -96,6 +96,15 @@ milestone status are in `docs/PLAN.md`; update that table when a milestone lands
   drawn on the CPU onto the rendered `Image`, after the GPU, from `Creature::legs()`, which
   `pose` fills only when `setKeepLegs(true)`. Keep the overlay's projection identical to the
   camera's (tan(fovY/2) × aspect), or the drawing slides off the legs.
+- Leg speed is `Creature::kStride` (metres per step cycle), not the creatures' speeds: the
+  legs were slowed in round 17 by lengthening the stride so nothing measured changed. If it
+  grows again, watch `level_tests`' worst IK miss (the foothold search keeps the
+  least-missing placement when none fits).
+- The motion scanner (`src/game/Scanner.*`) runs inside `stepHunters` whenever creatures are
+  loose and only reads them (the encounter numbers don't change). Its blips and pulse reach
+  `present.hlsl` through `FrameSettings::scan` (t3 and `p6`); its pings go out through
+  `collectSounds`. A scene stepped at a lower frame rate steps the AI coarser, so
+  previews of AI scenes run at 30 fps and save time on resolution and spp instead.
 - Viewports (`corridor_straight_window`) come from their own `Rng` stream. A window cell
   still takes every draw the dressing stream would have taken (`Builder::skipDraws`). Keep it
   that way for anything new placed instead of a dressed piece: `level_tests` compares every

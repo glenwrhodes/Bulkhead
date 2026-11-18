@@ -27,7 +27,7 @@ Custom C++20 engine on DirectX 12 with DXR ray tracing (RTX 4090 Laptop GPU, ray
 | 15 | Round 14: the approach (crawl in on walls and ceiling, stop, hiss, crouch, leap from any surface), turning round without a snap | **Done (round 14)**: see The approach |
 | 16 | Round 15: lights without a cap: sample a few lights per pixel by importance instead of shadow-testing all of them (see Viewports, "How many lights") | Proposed |
 | 17 | Round 16: the threat filmed close; the climbing film, plain and with the crawl overlay (see "The climb") | Done |
-| 18 | Round 17: the motion scanner (blips on the minimap and map) | Planned |
+| 18 | Round 17: the motion scanner (blips on the minimap and map), the scanner film; the legs 20% slower | Done (see "The motion scanner") |
 | 19 | Round 18: final pass (re-measure, every film with sound) | Planned |
 
 ## Maze generation (`src/world/Maze.*`)
@@ -593,6 +593,55 @@ seed, same timing, frame for frame, so the two cut together.
   chained at their rest spacing from the pelvis back. This affects every creature film a
   little; `film_threat` and both climb films were rendered after it, `film_approach`, hunt and
   fight before.
+
+## Slower legs (round 17)
+
+Glen: the legs move "a little fast... about 20% slower". The legs cycle once per `kStride`
+of travel, so there were two ways: the same stride with the creature 20% slower, or a 25%
+longer stride at the same speed. **The stride is longer (0.55 → 0.6875 m), the speeds are
+unchanged.** Slowing the creatures would have changed what was measured and tuned (the
+encounter timer, the charge, the leap), and Glen liked how it hunts; he only asked about the
+legs. Claws still land and stay put; each lands 25% farther ahead, and the claw sounds come
+20% less often.
+- The longer stride first failed the reach check: on the floor-to-wall bevel a hind claw
+  was 0.20 m out of reach. When no sideways placement fits, `foothold` used to fall back to
+  the last one it tried (1.9 × out); it now keeps the one that misses least, and also tries
+  up to 0.16 m along the path. Worst miss in `level_tests`: 0.000 m, slide 0.000 m. Where a
+  placement fitted before, the same one is chosen.
+- Encounters: first seen 74.3 s mean / 57.8 s median, first death 81.1 s, identical (head bob
+  follows the stride, which shifts later events a hair: 6.1 deaths per 10 min, was 6.2).
+- Re-rendered: both climb films. Not re-rendered: hunt, fight, approach, threat, window.
+
+## The motion scanner (round 17)
+
+Glen: "the aliens to show up as a blip on the map... the general direction of an enemy, but
+not a specific location... blobs indicating there was 'something coming'." `src/game/Scanner.*`
+(no D3D12; drawn in `present.hlsl` on the minimap and the M map).
+- **The pulse:** every 2.4 s with nothing about, a pulse goes out from you; its front (a bright
+  green ring with a fading wash behind it) sweeps to 25 m in 1 s. A faint ring marks 25 m.
+- **Blips:** anything moving faster than 0.2 m/s that the front passes, through walls, leaves
+  a soft green blob. It is put up to 0.8 m + 7% of the distance away from the creature (a fresh
+  random offset each pulse) and is 2 m + 8% of the distance across, so at 20 m you know a
+  direction and a rough distance, not a cell. It flashes as the front finds it and fades over
+  ~2 s, so a creature leaves a short trail of fading blobs that shows which way it is going.
+  Two close together run into one blob. Standing still (a threat, a coil, the dead): nothing.
+- **The ping:** one per pulse (`scanner_ping`, not positional). With something found, the next
+  pulse comes sooner (2.0 s at 25 m down to 0.9 s at 5 m), louder (0.30 → 0.75) and higher
+  (pitch up to 1.45).
+- **When:** whenever creatures are loose (the window with `--creatures`, and the hunt, fight,
+  approach, threat and scanner scenes). Walks and other captures have no creatures, so no
+  scanner. It doesn't change the AI: the encounter numbers are identical.
+- **`--scene scanner`** (`film_scanner`, seed 1234, 18.6 s): you hold a junction (cell 29, 29,
+  lit), facing down its longest straight way. Three creatures start about 40 m of walking
+  away, one down each way, and roam toward you (`Hunter::headFor`, drift pace). Blips at the
+  edge of range from 6 s, from three directions; the one ahead shows at the far end of the
+  corridor at 10.8 s (20 m, on the ceiling), hisses, stalks, charges at 15.5 s; the scene ends
+  a second after it is inside 9 m. A second one, from the side, has also seen you and is
+  charging off screen. 10 pings, 2.4 s apart at first, 1.56 s at the end, louder each time.
+- **Checks:** `level_tests` "the motion scanner": a moving contact at 10 m leaves blips 0-1.6 m
+  off (mean 1.2 m), never one near a still contact or one at 30 m; the first ping is the empty
+  one, later ones higher and louder and closer together; the scene shows one in view between 5
+  and 20 s, with blips from at least two directions, and you alive.
 
 ## The walking weave (fixed after round 10)
 

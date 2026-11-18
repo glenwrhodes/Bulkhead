@@ -54,6 +54,8 @@ struct FrameSettings {
     // Short-lived lights (sparks, muzzle flash, bolts, impacts) and steam plumes.
     const std::vector<DynamicLight>* dynamicLights = nullptr;
     const std::vector<SteamPlume>* steam = nullptr;
+    // The motion scanner (round 17): blips and the pulse's front, on the minimap and the map.
+    ScanState scan;
 };
 
 class Renderer {
@@ -113,6 +115,9 @@ private:
         ComPtr<ID3D12Resource> steam;        // SteamPlume
         void* steamPtr = nullptr;
         uint32_t steamCapacity = 0;
+        ComPtr<ID3D12Resource> blips;        // float4 per scanner blip (x, z, radius, alpha)
+        void* blipsPtr = nullptr;
+        uint32_t blipsCapacity = 0;
     };
 
     void createPipelines();
@@ -176,7 +181,7 @@ private:
     ComPtr<ID3D12Resource> cellBuffer_, cellLightBuffer_, cellInfoBuffer_;
     bool levelSet_ = false;
     float gridW_ = 1, gridH_ = 1, lightCount_ = 0;
-    float dynCount_ = 0, steamCount_ = 0;  // this frame
+    float dynCount_ = 0, steamCount_ = 0, blipCount_ = 0;  // this frame
     uint64_t lastSceneTriangles_ = 0;
 };
 

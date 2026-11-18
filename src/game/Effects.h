@@ -2,6 +2,8 @@
 // Per-frame effect data the game hands to the renderer: short-lived lights (spark
 // bursts, the muzzle flash, bolts, impacts) and steam plumes. No D3D12 here.
 
+#include <vector>
+
 #include "core/Math.h"
 
 namespace bh {
@@ -24,6 +26,20 @@ struct SteamPlume {
     float strength = 1.0f;  // 0 = off .. 1 = full jet (it hisses on and off)
     Vec3 light;
     float seed = 0.0f;
+};
+
+// The motion scanner (round 17), drawn on the minimap and the map: a soft blob where
+// something moved (never exactly where it is), and the pulse sweeping out from the player.
+struct ScanBlip {
+    float x = 0.0f, z = 0.0f;  // world metres
+    float radius = 2.0f;       // metres
+    float alpha = 1.0f;        // 0..1 (fades after the pulse that found it)
+};
+struct ScanState {
+    const std::vector<ScanBlip>* blips = nullptr;
+    float front = -1.0f;       // metres out from the player of the pulse's front (< 0: none)
+    float frontAlpha = 0.0f;
+    float range = 25.0f;
 };
 
 }  // namespace bh

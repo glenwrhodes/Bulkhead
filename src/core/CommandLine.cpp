@@ -64,6 +64,8 @@ std::string usageText() {
         "                    filmed for the threat (rear, jaws, hiss), the coil and the leap\n"
         "  --scene climb     capture: the crawl itself, floor, wall, the wall-ceiling edge, ceiling\n"
         "                    and back down, from close camera setups (--overlay: the system drawn on it)\n"
+        "  --scene scanner   capture: you hold a junction; the motion scanner shows three creatures\n"
+        "                    closing in from different ways until one comes into view ahead\n"
         "  --scene window    capture: walk up to a viewport on the ship's edge, the stars outside,\n"
         "                    the creature crawling past behind you in the glass, turn to face it\n"
         "  --scene weave     capture: the window's movement code, forward held, down a straight\n"
@@ -116,7 +118,7 @@ std::optional<Options> parseCommandLine(int argc, char** argv, std::string& erro
             auto v = value();
             if (!v) return std::nullopt;
             if (*v != "walk" && *v != "fire" && *v != "crawl" && *v != "hunt" && *v != "fight" && *v != "weave" &&
-                *v != "window" && *v != "approach" && *v != "threat" && *v != "climb")
+                *v != "window" && *v != "approach" && *v != "threat" && *v != "climb" && *v != "scanner")
                 return bad(*v);
             o.scene = std::string(*v);
         } else if (a == "--assets") {

@@ -48,7 +48,9 @@ struct CreaturePose {
 
 class Creature {
 public:
-    static constexpr float kStride = 0.55f;  // metres the body moves per step cycle
+    // metres the body moves per step cycle. 0.55 until round 17; Glen found the legs a
+    // little fast, so the stride is 25% longer: at the same speed the legs cycle 20% slower.
+    static constexpr float kStride = 0.6875f;
     static constexpr float kDuty = 0.62f;    // fraction of a cycle a foot is planted
 
     explicit Creature(const Kit& kit);

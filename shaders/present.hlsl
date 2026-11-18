@@ -9,11 +9,13 @@ cbuffer Present : register(b0)
     float4 p3;  // x despeckle k (0 = off), y redout, z blackout
     float4 p4;  // map grid: x,y margin (uv), z,w one cell (uv)
     float4 p5;  // x grid w, y grid h, z hide unexplored (1 = on), w minimap half-width in cells (0 = whole map)
+    float4 p6;  // scanner: x blips, y pulse front (m, < 0 none), z front alpha, w range (m, 0 = scanner off)
 };
 
 Texture2D<float4> gAccum : register(t0);
 Texture2D<float4> gMap   : register(t1);
 StructuredBuffer<uint> gExplored : register(t2);  // per cell, non-zero = seen
+StructuredBuffer<float4> gBlips : register(t3);   // x, z (m), radius (m), alpha
 SamplerState gLinear : register(s0);
 
 struct VSOut
@@ -83,6 +85,43 @@ float3 mapColor(float2 uv, float2 duv)
     return m * 0.25;
 }
 
+// map uv -> world metres (x, z)
+float2 uvToWorld(float2 uv) { return ((uv - p4.xy) / p4.zw - 0.5) * 4.0; }
+
+// The motion scanner over the map at uv: the pulse sweeping out from the player, a faint
+// ring at its range, and soft blobs where something moved. mpp: metres per screen pixel.
+float3 drawScanner(float3 col, float2 uv, float mpp)
+{
+    if (p6.w <= 0.0) return col;
+    float2 w = uvToWorld(uv);
+    float dist = length(w - uvToWorld(p2.xy));
+    const float3 scanCol = float3(0.40, 1.0, 0.70);
+    float px1 = max(mpp, 0.05);
+    // the edge of its range
+    float edge = 1.0 - smoothstep(0.4 * px1, 1.4 * px1, abs(dist - p6.w));
+    col = lerp(col, scanCol, 0.22 * edge);
+    // the pulse: a bright front and a fading wash behind it
+    if (p6.y >= 0.0 && dist <= p6.w)
+    {
+        float front = exp(-pow((dist - p6.y) / max(1.6 * px1, 0.3), 2.0));
+        float wash = dist < p6.y ? 0.22 * exp(-(p6.y - dist) / 3.0) : 0.0;
+        col = lerp(col, scanCol, saturate((0.85 * front + wash) * p6.z));
+    }
+    // blips: blobs that run together when they are close
+    float g = 0.0;
+    for (uint i = 0; i < uint(p6.x); ++i)
+    {
+        float4 b = gBlips[i];
+        float2 dd = w - b.xy;
+        g += b.w * exp(-1.4 * dot(dd, dd) / (b.z * b.z));
+    }
+    float halo = saturate(g * 1.3);
+    float core = saturate(g * 1.8 - 0.4);
+    col = lerp(col, float3(0.20, 0.85, 0.50), 0.75 * halo);
+    col = lerp(col, float3(0.88, 1.0, 0.90), core);
+    return col;
+}
+
 // Draws the map into rect (origin, size in pixels), showing the map image around uvC
 // (uvHalf either side); returns colour, alpha.
 float4 drawMap(float2 px, float2 org, float2 size, float opacity, float2 uvC, float2 uvHalf)
@@ -96,7 +135,10 @@ float4 drawMap(float2 px, float2 org, float2 size, float opacity, float2 uvC, fl
     {
         o = float4(0.01, 0.015, 0.02, 0.8);
         if (all(local >= 0.0) && all(local <= 1.0))
+        {
             o = float4(mapColor(uv, 2.0 * uvHalf / size), 0.95);
+            o.rgb = drawScanner(o.rgb, uv, 2.0 * uvHalf.y / size.y / p4.w * 4.0);
+        }
     }
     float border = 1.0 - smoothstep(0.5, 1.8, abs(d));
     o.rgb = lerp(o.rgb, float3(0.25, 0.82, 0.88), border);

@@ -893,6 +893,87 @@ void testCollision() {
 
 }  // namespace
 
+// The motion scanner (round 17): moving things inside its range leave a blip near them
+// (never on them), still things and far things none; the pulse comes round faster and the
+// ping rises as something closes in. Then the scanner scene: blips from more than one way,
+// and one comes into view ahead.
+void testScanner() {
+    {
+        Scanner sc;
+        std::vector<Scanner::Contact> contacts = {{{10.0f, 0, 0}, 1.0f}, {{0, 0, -8.0f}, 0.0f}, {{30.0f, 0, 0}, 1.5f}};
+        int blips = 0;
+        float maxOff = 0.0f, sumOff = 0.0f, nearStill = 0.0f, nearFar = 0.0f;
+        std::vector<float> pulseTimes;
+        std::vector<Scanner::Pulse> pulses;
+        for (int i = 0; i <= 30 * 8; ++i) {
+            const float t = float(i) / 30.0f;
+            contacts[0].position.z = 0.5f * t;  // (it moves; slowly enough to stay ~10 m out)
+            sc.update(t, {0, 1.7f, 0}, contacts);
+            for (const Scanner::Pulse& p : sc.takePulses()) pulses.push_back(p);
+            for (const ScanBlip& b : sc.blips()) {
+                const float dA = std::hypot(b.x - contacts[0].position.x, b.z - contacts[0].position.z);
+                if (b.alpha > 0.5f) ++blips, sumOff += dA, maxOff = std::max(maxOff, dA);
+                if (std::hypot(b.x, b.z + 8.0f) < 2.0f) nearStill = 1.0f;
+                if (std::hypot(b.x - 30.0f, b.z) < 6.0f) nearFar = 1.0f;
+            }
+        }
+        std::printf("  scanner: %zu pulses in 8 s, %d bright blip-frames, offset from the contact up to %.2f m (mean %.2f)\n",
+                    pulses.size(), blips, maxOff, blips ? sumOff / float(blips) : 0.0f);
+        for (const Scanner::Pulse& p : pulses)
+            std::printf("    pulse at %.2f s: nearest %.1f m, %d found, ping pitch %.2f gain %.2f\n", p.time, p.nearest,
+                        p.contacts, Scanner::pingPitch(p), Scanner::pingGain(p));
+        CHECK_MSG(blips > 0, "a moving contact at 10 m left no blip");
+        CHECK_MSG(maxOff < 0.8f + 0.07f * 11.0f + 0.6f, std::format("a blip {:.2f} m from what it found", maxOff));
+        CHECK_MSG(blips == 0 || sumOff / float(blips) > 0.15f, "blips sit right on the contact");
+        CHECK_MSG(nearStill == 0.0f, "something standing still showed");
+        CHECK_MSG(nearFar == 0.0f, "something beyond its range showed");
+        CHECK(pulses.size() >= 4);
+        if (pulses.size() >= 4) {
+            CHECK_MSG(pulses[0].nearest < 0.0f && Scanner::pingPitch(pulses[0]) == 1.0f, "the first ping is not the empty one");
+            const Scanner::Pulse& late = pulses.back();
+            CHECK_MSG(late.nearest > 8.0f && late.nearest < 13.0f, std::format("nearest {:.1f} m", late.nearest));
+            CHECK(Scanner::pingPitch(late) > 1.0f && Scanner::pingGain(late) > Scanner::pingGain(pulses[0]));
+            const float gapLate = pulses.back().time - pulses[pulses.size() - 2].time;
+            CHECK_MSG(gapLate < Scanner::kPeriodIdle - 0.3f, std::format("pulses {:.2f} s apart with a contact at 10 m", gapLate));
+        }
+        // nothing about: idle pulses
+        Scanner idle;
+        std::vector<Scanner::Pulse> ip;
+        for (int i = 0; i <= 30 * 10; ++i) {
+            idle.update(float(i) / 30.0f, {}, {});
+            for (const Scanner::Pulse& p : idle.takePulses()) ip.push_back(p);
+        }
+        CHECK(ip.size() >= 4 && idle.blips().empty());
+        if (ip.size() >= 2) CHECK(std::abs(ip[1].time - ip[0].time - Scanner::kPeriodIdle) < 0.05f);
+    }
+    // the scene
+    MazeParams mp;
+    mp.width = mp.height = 40;
+    mp.seed = 1234;
+    Game game(g_kit, mp);
+    game.setHuntTuning(HuntTuning::round11());
+    CHECK_MSG(game.setupScannerScene(), "no junction for the scanner scene");
+    if (game.hunters().empty()) return;
+    const float dt = 1.0f / 30.0f;
+    std::set<int> ways;  // which quarter (round the player) blips have shown in
+    float t = 0.0f;
+    for (; t < game.scannerSceneLength() && !game.scannerSceneDone(t); t += dt) {
+        game.stepScannerScene(t, dt);
+        const Vec3 p = game.camera().position;
+        for (const ScanBlip& b : game.scanner().blips()) {
+            const float a = std::atan2(b.z - p.z, b.x - p.x);
+            ways.insert(int(std::floor((a + kPi) / (0.5f * kPi) + 0.5f)) % 4);
+        }
+    }
+    std::printf("  scanner scene (seed 1234): %.1f s, one in view at %.1f s, blips from %zu of 4 directions, %d pulses, "
+                "player %s\n",
+                t, game.scannerSeenAt(), ways.size(), game.scanner().pulses(), game.playerDead() ? "dead" : "alive");
+    CHECK_MSG(game.scannerSeenAt() > 5.0f && game.scannerSeenAt() < 20.0f,
+              std::format("one came into view at {:.1f} s", game.scannerSeenAt()));
+    CHECK_MSG(ways.size() >= 2, "blips from only one direction");
+    CHECK(!game.playerDead());
+}
+
 int main(int argc, char** argv) {
     std::string error;
     std::filesystem::path assets = argc > 1 ? argv[1] : findAssetsDirectory({});
@@ -911,7 +992,8 @@ int main(int argc, char** argv) {
                           {"creature: parts, crawl surface, gait, IK", testCreature},
                           {"hunters: roaming, the hunt, the fight, four hits", testHunters},
                           {"walking straight: no weave at any frame rate", testWalkStraight},
-                          {"viewports: on the edge, facing out, nothing else moved; the window scene", testViewports}};
+                          {"viewports: on the edge, facing out, nothing else moved; the window scene", testViewports},
+                          {"the motion scanner: blips, pulses, pings; the scanner scene", testScanner}};
     for (const Test& t : tests) {
         const int before = g_failures;
         std::printf("[ RUN  ] %s\n", t.name);

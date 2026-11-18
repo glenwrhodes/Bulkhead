@@ -419,18 +419,24 @@ void Creature::pose(const CrawlPath& path, const CreaturePose& p) {
             }
             // the claw must be neither out of reach nor folded in under the hip
             const float far = 0.9f * (L1 + L2), near = std::abs(L1 - L2) + 0.12f;
-            float u = p.uOf(sf) + lat;
-            for (float scale : {1.0f, 0.85f, 1.15f, 0.7f, 1.3f, 0.55f, 1.5f, 0.4f, 1.7f, 0.25f, 1.9f}) {
-                u = p.uOf(sf) + lat * scale;
-                const Vec3 f = path.point(sf, u);
-                float worst = 0.0f, closest = 1e9f;
-                for (const Vec3& h : hips) {
-                    worst = std::max(worst, length(f - h));
-                    closest = std::min(closest, length(f - h));
+            // (if none fits, the one that misses least; along the path a little too)
+            float bestU = p.uOf(sf) + lat, bestS = sf, bestMiss = 1e9f;
+            for (float ds : {0.0f, -0.08f, 0.08f, -0.16f, 0.16f}) {
+                for (float scale : {1.0f, 0.85f, 1.15f, 0.7f, 1.3f, 0.55f, 1.5f, 0.4f, 1.7f, 0.25f, 1.9f}) {
+                    const float u = p.uOf(sf + ds) + lat * scale;
+                    const Vec3 f = path.point(sf + ds, u);
+                    float worst = 0.0f, closest = 1e9f;
+                    for (const Vec3& h : hips) {
+                        worst = std::max(worst, length(f - h));
+                        closest = std::min(closest, length(f - h));
+                    }
+                    const float miss = std::max(0.0f, worst - far) + std::max(0.0f, near - closest);
+                    if (miss < bestMiss) bestMiss = miss, bestU = u, bestS = sf + ds;
+                    if (miss <= 0.0f) break;
                 }
-                if (worst < far && closest > near) break;
+                if (bestMiss <= 0.0f) break;
             }
-            return std::pair<Vec3, Vec3>{path.point(sf, u), path.normal(sf, u)};
+            return std::pair<Vec3, Vec3>{path.point(bestS, bestU), path.normal(bestS, bestU)};
         };
         const float c = p.s / kStride + kLegPhase[l];
         const float k = std::floor(c), ph = c - k;

@@ -618,6 +618,8 @@ void Game::restart() {
     bolts_.clear();
     impacts_.clear();
     std::fill(doorOpen_.begin(), doorOpen_.end(), 0.0f);
+    scanner_.reset();
+    scanPrev_.clear();
     if (huntersWanted_ > 0) spawnHunters(huntersWanted_, spawnSalt_);
 }
 
@@ -704,6 +706,24 @@ void Game::stepHunters(float dt) {
             }
         }
     }
+    updateScanner(dt);
+}
+
+void Game::updateScanner(float dt) {
+    if (!scannerActive()) return;
+    std::vector<Scanner::Contact> contacts(hunters_.size());
+    if (scanPrev_.size() != hunters_.size()) scanPrev_.assign(hunters_.size(), Vec3{1e9f, 0, 0});
+    for (size_t i = 0; i < hunters_.size(); ++i) {
+        const Hunter& h = hunters_[i];
+        const Vec3 p = h.bodyCenter();
+        const float moved = length(p - scanPrev_[i]);
+        // (a respawn far away is not movement)
+        const float speed = dt > 0.0f && moved < 3.0f ? moved / dt : 0.0f;
+        const bool live = h.alive() && h.state() != HunterState::Feed;
+        contacts[i] = {p, live ? speed : 0.0f};
+        scanPrev_[i] = p;
+    }
+    scanner_.update(time_, camera_.position, contacts);
 }
 
 float Game::walkDuration() const {
@@ -1384,6 +1404,164 @@ void Game::stepHuntScene(float t, float dt) {
 }
 
 // ---------------------------------------------------------------------------
+// The scanner scene (round 17): hold a junction while the scanner shows them coming
+// ---------------------------------------------------------------------------
+
+bool Game::setupScannerScene() {
+    const Maze& m = maze_;
+    const int W = m.width(), H = m.height();
+    auto step = [](Int2 c, int d) { return Int2{c.x + kDx[d], c.y + kDy[d]}; };
+    auto open = [&](Int2 c, int d) { return m.inBounds(c) && m.passable(c.x, c.y, Dir(d)) && m.inBounds(step(c, d)); };
+    auto straightAlong = [&](Int2 c, int d) {
+        if (!m.inBounds(c) || m.kind(c) != CellKind::Corridor) return false;
+        return m.passable(c.x, c.y, Dir(d)) && m.passable(c.x, c.y, Dir((d + 2) & 3)) &&
+               !m.passable(c.x, c.y, Dir((d + 1) & 3)) && !m.passable(c.x, c.y, Dir((d + 3) & 3));
+    };
+    struct Pick {
+        Int2 j{};
+        int ahead = 0, score = -100000;
+        std::vector<Int2> spawns;
+    } best;
+    // walking distance from the junction, and which of its ways each cell is reached by
+    std::vector<int> dist(size_t(W * H)), via(size_t(W * H));
+    for (int y = 0; y < H; ++y)
+        for (int x = 0; x < W; ++x) {
+            const Int2 j{x, y};
+            if (m.kind(j) != CellKind::Corridor) continue;
+            int ways = 0;
+            for (int d = 0; d < 4; ++d) ways += open(j, d) ? 1 : 0;
+            if (ways < 3) continue;
+            std::fill(dist.begin(), dist.end(), -1);
+            std::fill(via.begin(), via.end(), -1);
+            std::vector<Int2> q;
+            dist[size_t(y * W + x)] = 0;
+            for (int d = 0; d < 4; ++d)
+                if (open(j, d)) {
+                    const Int2 n = step(j, d);
+                    dist[size_t(n.y * W + n.x)] = 1;
+                    via[size_t(n.y * W + n.x)] = d;
+                    q.push_back(n);
+                }
+            for (size_t i = 0; i < q.size(); ++i) {
+                const Int2 c = q[i];
+                for (int d = 0; d < 4; ++d) {
+                    if (!open(c, d)) continue;
+                    const Int2 n = step(c, d);
+                    if (dist[size_t(n.y * W + n.x)] >= 0) continue;
+                    dist[size_t(n.y * W + n.x)] = dist[size_t(c.y * W + c.x)] + 1;
+                    via[size_t(n.y * W + n.x)] = via[size_t(c.y * W + c.x)];
+                    q.push_back(n);
+                }
+            }
+            // per way: a corridor cell 9-11 cells off (prefer 10) reached through it
+            auto spawnFor = [&](int d) {
+                Int2 bestC{-1, -1};
+                int bestErr = 99;
+                for (const Int2& c : q) {
+                    const size_t i = size_t(c.y * W + c.x);
+                    if (via[i] != d || m.kind(c) != CellKind::Corridor) continue;
+                    const int e = std::abs(dist[i] - 10);
+                    if (e <= 1 && e < bestErr) bestErr = e, bestC = c;
+                }
+                return bestC;
+            };
+            for (int a = 0; a < 4; ++a) {
+                if (!open(j, a)) continue;
+                // the corridor ahead: straight, a few cells long
+                int run = 0;
+                Int2 c = step(j, a);
+                std::vector<Int2> cells;
+                while (straightAlong(c, a) && run < 8) cells.push_back(c), c = step(c, a), ++run;
+                if (run < 3) continue;
+                Pick p;
+                p.j = j;
+                p.ahead = a;
+                const Int2 sa = spawnFor(a);
+                if (sa.x < 0) continue;
+                p.spawns.push_back(sa);
+                for (int d = 0; d < 4; ++d)
+                    if (d != a && open(j, d)) {
+                        const Int2 s = spawnFor(d);
+                        if (s.x >= 0) p.spawns.push_back(s);
+                    }
+                if (p.spawns.size() < 3) continue;  // ahead and two more ways
+                const Mood mood = level_.sections.moodAt(cells[cells.size() / 2]);
+                p.score = std::min(run, 6) * 4 + (mood == Mood::Lit ? 30 : mood == Mood::Dim ? 24 : mood == Mood::Derelict ? 8 : 0);
+                for (Int2 r : cells) {
+                    for (const LowPipe& lp : level_.lowPipes)
+                        if (std::abs(lp.center.x - cellCenter(r).x) < 2.1f && std::abs(lp.center.z - cellCenter(r).z) < 2.1f)
+                            p.score -= 1000;
+                    for (const Emitter& e : level_.emitters)
+                        if (e.kind == Emitter::Spark && std::abs(e.position.x - cellCenter(r).x) < 2.5f &&
+                            std::abs(e.position.z - cellCenter(r).z) < 2.5f)
+                            p.score -= 10;
+                }
+                if (p.score > best.score) best = p;
+            }
+        }
+    if (best.spawns.empty()) return false;
+    scan_ = ScanScene{};
+    scan_.junction = best.j;
+    scan_.ahead = dirVector(Dir(best.ahead));
+    scan_.start = cellCenter(best.j) + Vec3{0, kEyeHeight, 0};
+    scan_.yaw = std::atan2(-scan_.ahead.x, -scan_.ahead.z);
+    scan_.pitch = -0.03f;
+    scan_.spawnCells = best.spawns;
+    if (scan_.spawnCells.size() > 3) scan_.spawnCells.resize(3);
+    camera_ = Camera{};
+    sway_ = {};
+    camera_.position = scan_.start;
+    camera_.yaw = scan_.yaw;
+    camera_.pitch = scan_.pitch;
+    flashlightOn_ = true;
+    hunters_.clear();
+    respawnAt_.clear();
+    huntersWanted_ = 0;
+    scanner_.reset();
+    scanPrev_.clear();
+    // the one that comes down the corridor ahead starts first; the others a little behind
+    const float goAt[3] = {0.5f, 2.5f, 4.0f};
+    for (size_t i = 0; i < scan_.spawnCells.size(); ++i) {
+        spawnHunterAt(scan_.spawnCells[i], 2, maze_.params().seed * 613u + uint64_t(i) * 7u + 5u);
+        scan_.goAt.push_back(goAt[i]);
+    }
+    return hunters_.size() == scan_.spawnCells.size();
+}
+
+void Game::stepScannerScene(float t, float dt) {
+    for (size_t i = 0; i < hunters_.size() && i < scan_.goAt.size(); ++i) {
+        if (scan_.goAt[i] >= 0.0f && t >= scan_.goAt[i]) {
+            hunters_[i].headFor(maze_, scan_.junction, i == 0 ? 2 : 1);
+            scan_.goAt[i] = -1.0f;  // (once)
+        }
+    }
+    // standing still, breathing; the look drifts a little
+    camera_.position = scan_.start + Vec3{0, 0.006f * std::sin(t * 1.7f), 0};
+    camera_.yaw = scan_.yaw + 0.03f * std::sin(t * 0.37f);
+    camera_.pitch = scan_.pitch + 0.012f * std::sin(t * 0.53f + 1.0f);
+    sway_ = {};
+    stepWorld(dt);
+    // the end: once the first of them is in plain view ahead, when it has come within 9 m
+    // (a second later), or 9 s after it showed
+    for (size_t i = 0; i < hunters_.size(); ++i) {
+        const Hunter& h = hunters_[i];
+        if (!h.alive()) continue;
+        const Vec3 d = h.headPosition() - camera_.position;
+        const float dl = length(d);
+        if (scan_.seenAt < 0.0f) {
+            if (dl > 24.0f || dot(d, camera_.forward()) < 0.82f * dl) continue;
+            if (occlusionTo(h.headPosition()) > 0.5f) continue;
+            scan_.seenAt = t;
+            scan_.seenBy = int(i);
+            scan_.endAt = t + 9.0f;
+        } else if (int(i) == scan_.seenBy && dl < 9.0f) {
+            scan_.endAt = std::min(scan_.endAt, t + 1.0f);
+        }
+    }
+    if (playerDead() && scan_.endAt < 0.0f) scan_.endAt = t + 3.0f;
+}
+
+// ---------------------------------------------------------------------------
 // Sound (part 3): what the game hands the mixer each frame
 // ---------------------------------------------------------------------------
 
@@ -1444,6 +1622,19 @@ void Game::collectSounds(std::vector<SoundEvent>& events, std::vector<SoundLoop>
     events.clear();
     loops.clear();
     const float dt = std::max(0.0f, time_ - soundTime_);
+    const bool firstCall = !soundStarted_;
+    // the scanner's pulses: one ping each, higher and louder the nearer the last contact
+    for (const Scanner::Pulse& p : scanner_.takePulses()) {
+        if (firstCall || !scannerActive() || playerDead()) continue;
+        SoundEvent e;
+        e.sound = Snd::ScannerPing;
+        e.time = p.time;
+        e.pos = camera_.position;
+        e.positional = false;  // (the set in your hand)
+        e.gain = Scanner::pingGain(p);
+        e.pitch = Scanner::pingPitch(p);
+        pendingSounds_.push_back(e);
+    }
     if (!soundStarted_) {
         // first call: take stock, no one-shots (a capture starting late mustn't open with a crash)
         soundStarted_ = true;

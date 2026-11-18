@@ -324,6 +324,21 @@ bool Hunter::chooseDriftGoal(const Maze& maze, const HuntWorld& w) {
     return false;  // you are behind it: it tries again at the next cell centre
 }
 
+bool Hunter::headFor(const Maze& maze, Int2 goal, int surface) {
+    if (!alive() || state_ != HunterState::Roam) return false;
+    const int keep = surfacePref_;
+    surfacePref_ = surface;
+    investigate_ = false;
+    lastRoute_ = "drift";
+    if (routeAhead(maze, goal) || route(maze, goal)) {
+        drifting_ = true;
+        driftTimer_ = 1e6f;  // (no random drift leg takes it off this one)
+        return true;
+    }
+    surfacePref_ = keep;
+    return false;
+}
+
 void Hunter::spawn(const Maze& maze, Int2 c, int surface) {
     cells_ = {c};
     cellS_ = {0.0f};

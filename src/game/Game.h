@@ -17,6 +17,7 @@
 #include "game/Creature.h"
 #include "game/Effects.h"
 #include "game/Hunter.h"
+#include "game/Scanner.h"
 #include "world/CrawlSurface.h"
 #include "world/Level.h"
 #include "world/Maze.h"
@@ -203,6 +204,22 @@ public:
     void restart();          // back to the start: player, hunters, doors
     int kills() const { return kills_; }
 
+    // ---- the motion scanner (round 17) ----
+    // Runs whenever creatures are loose (stepped with them): blips on the minimap and the
+    // map, and a ping per pulse (collectSounds). See Scanner.h.
+    void setScannerOn(bool on) { scannerOn_ = on; }
+    bool scannerActive() const { return scannerOn_ && !hunters_.empty(); }
+    const Scanner& scanner() const { return scanner_; }
+    ScanState scanState() const { return scannerActive() ? scanner_.state() : ScanState{}; }
+
+    // The scanner scene (capture --scene scanner, ~26 s): you hold a junction, facing down
+    // its longest corridor. Three creatures, out of sight down three of its ways, close in;
+    // the scanner shows them coming, until one comes into view at the end of the corridor.
+    bool setupScannerScene();
+    void stepScannerScene(float t, float dt);
+    float scannerSceneLength() const { return scan_.length; }
+    bool scannerSceneDone(float t) const { return scan_.endAt >= 0.0f && t >= scan_.endAt; }
+
     // Filmed scenes driven by the real AI at fixed steps (capture --scene hunt|fight).
     // hunt: you walk a dark corridor, it stalks you on the ceiling, you back off and hit
     //       it twice, it charges, leaps, and you die.
@@ -309,6 +326,25 @@ private:
     std::vector<int> playerDist_;  // walking distance (cells) from the player's cell, for hearing
     Int2 playerDistFrom_{-1, -1};
     void stepHunters(float dt);
+    void updateScanner(float dt);
+    Scanner scanner_;
+    bool scannerOn_ = true;
+    std::vector<Vec3> scanPrev_;  // each hunter's body centre at the last update (its speed)
+    struct ScanScene {
+        Int2 junction;
+        Vec3 ahead;               // the corridor the camera faces
+        Vec3 start;               // eye
+        float yaw = 0.0f, pitch = 0.0f;
+        std::vector<Int2> spawnCells;
+        std::vector<float> goAt;  // when each one is set on you
+        float length = 26.0f;
+        float endAt = -1.0f;
+        float seenAt = -1.0f;     // the first came into view at the end of the corridor
+        int seenBy = -1;
+    } scan_;
+public:
+    float scannerSeenAt() const { return scan_.seenAt; }
+private:
     std::vector<float> respawnAt_;
     float deathT_ = -1.0f;
     int killer_ = -1;

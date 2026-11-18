@@ -28,8 +28,9 @@ struct TraceConstants {
 static_assert(sizeof(TraceConstants) <= 256, "one constant slot");
 
 struct PresentConstants {
-    float p0[4], p1[4], p2[4], p3[4], p4[4], p5[4];
+    float p0[4], p1[4], p2[4], p3[4], p4[4], p5[4], p6[4];
 };
+constexpr uint32_t kMaxBlips = 32;
 constexpr UINT kPresentConstantCount = sizeof(PresentConstants) / 4;
 
 struct GpuSubmesh {
@@ -271,7 +272,7 @@ void Renderer::createPipelines() {
     prange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     prange.NumDescriptors = 2;
     prange.OffsetInDescriptorsFromTableStart = 0;
-    D3D12_ROOT_PARAMETER pp[3]{};
+    D3D12_ROOT_PARAMETER pp[4]{};
     pp[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
     pp[0].Constants.Num32BitValues = kPresentConstantCount;
     pp[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
@@ -282,6 +283,9 @@ void Renderer::createPipelines() {
     pp[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
     pp[2].Descriptor.ShaderRegister = 2;  // t2: explored cells
     pp[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    pp[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+    pp[3].Descriptor.ShaderRegister = 3;  // t3: scanner blips
+    pp[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     D3D12_STATIC_SAMPLER_DESC sampler{};
     sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
     sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
@@ -289,7 +293,7 @@ void Renderer::createPipelines() {
     sampler.MaxLOD = D3D12_FLOAT32_MAX;
     sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     D3D12_ROOT_SIGNATURE_DESC prs{};
-    prs.NumParameters = 3;
+    prs.NumParameters = 4;
     prs.pParameters = pp;
     prs.NumStaticSamplers = 1;
     prs.pStaticSamplers = &sampler;
@@ -685,6 +689,14 @@ void Renderer::recordScene(const std::vector<SceneInstance>& instances, const Fr
                      {p.light.x, p.light.y, p.light.z, p.seed}};
         }
         steamCount_ = float(sn);
+        const size_t bn = s.scan.blips ? std::min<size_t>(s.scan.blips->size(), kMaxBlips) : 0;
+        ensure(f.blips, f.blipsPtr, f.blipsCapacity, kMaxBlips, sizeof(float) * 4);
+        auto* bl = static_cast<float*>(f.blipsPtr);
+        for (size_t i = 0; i < bn; ++i) {
+            const ScanBlip& b = (*s.scan.blips)[i];
+            bl[i * 4 + 0] = b.x, bl[i * 4 + 1] = b.z, bl[i * 4 + 2] = b.radius, bl[i * 4 + 3] = b.alpha;
+        }
+        blipCount_ = float(bn);
     }
 
     // --- top-level acceleration structure ---
@@ -834,11 +846,17 @@ void Renderer::recordScene(const std::vector<SceneInstance>& instances, const Fr
     pc.p5[1] = gridH_;
     pc.p5[2] = (grid && s.explored) ? 1.0f : 0.0f;
     pc.p5[3] = grid ? s.minimapCells : 0.0f;
+    // scanner (needs the map grid to place things in metres)
+    pc.p6[0] = grid ? blipCount_ : 0.0f;
+    pc.p6[1] = grid ? s.scan.front : -1.0f;
+    pc.p6[2] = s.scan.frontAlpha;
+    pc.p6[3] = (grid && s.scan.blips) ? s.scan.range : 0.0f;  // (no blip list: the scanner is off)
     cmd_->SetGraphicsRootSignature(presentRS_.Get());
     cmd_->SetPipelineState(presentPSO_.Get());
     cmd_->SetGraphicsRoot32BitConstants(0, kPresentConstantCount, &pc, 0);
     cmd_->SetGraphicsRootDescriptorTable(1, gpuSlot(kSlotPresent + last_ * 2));
     cmd_->SetGraphicsRootShaderResourceView(2, f.explored->GetGPUVirtualAddress());
+    cmd_->SetGraphicsRootShaderResourceView(3, f.blips->GetGPUVirtualAddress());
     cmd_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     cmd_->DrawInstanced(3, 1, 0, 0);
     transition(target_.Get(), targetState_, D3D12_RESOURCE_STATE_COPY_SOURCE);

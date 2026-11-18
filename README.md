@@ -123,6 +123,7 @@ Captures go to `captures/` (git-ignored):
 | `captures/approach_before/`, `approach_after/` | One that has spotted you closes in and leaps, before round 14 (a sprint along the floor) and after (over the walls, threat, coil, leap off the wall); same seed and start |
 | `captures/approach/` | The approach on another ship (seed 42) |
 | `captures/threat/` | The threat close up: on the ceiling of a lit corridor, reared down at you with its jaws open, then the coil and the leap |
+| `captures/scanner/` | The motion scanner: holding a junction, blips close in on the minimap from three ways, the pings quicken, and one comes into view at the end of the corridor |
 | `captures/climb/`, `climb_overlay/` | The crawl as a showcase: floor, wall, the wall-to-ceiling edge, ceiling, down the far wall; then the same frames with the legs, footholds, step arcs, surface and gait drawn over them |
 | `<capture>/audio.wav` | The sound of every capture, frame for frame, with `audio_events.csv` (what played when) and `audio_wave.png` |
 | `captures/window/` | A viewport on the ship's edge: stars outside, the corridor and the creature reflected in the glass, the flashlight across it, then the creature on the wall (1080p, 17.5 s) |

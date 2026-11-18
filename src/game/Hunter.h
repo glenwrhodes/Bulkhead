@@ -150,6 +150,9 @@ private:
     // Scenes: while hunting, keep to this surface in straight corridors (0 floor, 1 right
     // wall, 2 ceiling, 3 left wall) instead of picking per cell; -1 picks per cell.
     void setHuntSurface(int s) { huntSurface_ = s; }
+    // Scenes (round 17): roam toward this cell at the drift pace, on the given surface (as
+    // a drift leg does, but to an exact cell). It spots you on the way as usual.
+    bool headFor(const Maze& maze, Int2 goal, int surface);
 
   private:
     int huntSurface_ = -1;

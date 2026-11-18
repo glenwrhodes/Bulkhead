@@ -86,6 +86,7 @@ add_library(bulkhead_lib STATIC
   src/game/Encounters.cpp  src/game/Encounters.h
   src/game/AudioRecorder.cpp src/game/AudioRecorder.h
   src/game/CrawlOverlay.cpp src/game/CrawlOverlay.h
+  src/game/Scanner.cpp src/game/Scanner.h
   src/audio/Sounds.h
   src/audio/Mixer.cpp      src/audio/Mixer.h
   src/game/Effects.h)

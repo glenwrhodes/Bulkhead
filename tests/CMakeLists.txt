@@ -243,6 +243,16 @@ set_tests_properties(climb_preview PROPERTIES LABELS diag RUN_SERIAL TRUE)
 bulkhead_png_test(film_threat film
   GAME  --capture "${CAP}/threat" --scene threat --res 1920x1080 --fps 30 --spp 16 --seed ${FILM_SEED}
   CHECK --dir "${CAP}/threat" --at-least 150 --width 1920 --height 1080 --expect-motion)
+
+# The motion scanner (round 17): you hold a junction; blips close in on the minimap from
+# three ways until one comes into view at the end of the corridor ahead. Ping in audio.wav.
+bulkhead_png_test(film_scanner film
+  GAME  --capture "${CAP}/scanner" --scene scanner --res 1920x1080 --fps 30 --spp 16 --seed ${FILM_SEED}
+  CHECK --dir "${CAP}/scanner" --at-least 300 --width 1920 --height 1080 --expect-motion)
+# (small and rough, but at 30 fps: the AI steps once a frame, so a lower rate would change it)
+add_test(NAME scanner_preview COMMAND Bulkhead --capture "${CAP}/scanner_preview" --scene scanner --fps 30
+         --res 960x540 --spp 2 --seed ${FILM_SEED})
+set_tests_properties(scanner_preview PROPERTIES LABELS diag RUN_SERIAL TRUE)
 add_test(NAME approach_after COMMAND Bulkhead --capture "${CAP}/approach_after" --scene approach --res 1920x1080
          --fps 30 --spp 16 --seed ${FILM_SEED})
 add_test(NAME approach_original COMMAND Bulkhead --capture "${CAP}/approach_original" --scene approach --hunt original

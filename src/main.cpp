@@ -88,6 +88,7 @@ void applyGame(FrameSettings& s, const Game& game, const Options& o) {
     s.haze = o.haze;
     s.dynamicLights = &game.dynamicLights();
     s.steam = &game.steamPlumes();
+    s.scan = game.scanState();
 }
 
 // The scripted shooting scene (--scene fire): standing in a corridor, six shots at the
@@ -471,9 +472,21 @@ int runCapture(const Options& o) {
         log::info("Scene '{}': up to {:.1f} s, in a {} section", o.scene, game.huntSceneLength(),
                   toString(game.moodAtCamera()));
     }
+    const bool scanScene = o.scene == "scanner";
+    if (scanScene) {
+        game.setHuntTuning(huntTuning(o));
+        if (!game.setupScannerScene()) {
+            log::error("Scene 'scanner': no junction with a corridor ahead and three ways in (or no creature)");
+            return 1;
+        }
+        const Int2 j = game.cameraCell();
+        log::info("Scene 'scanner': up to {:.1f} s, holding the junction at cell ({}, {}) in a {} section, {} creatures",
+                  game.scannerSceneLength(), j.x, j.y, toString(game.moodAtCamera()), game.hunters().size());
+    }
     const float sceneLength = fireScene    ? FireScene::kDuration
                               : crawlScene ? game.crawlDuration()
                               : huntScene  ? game.huntSceneLength()
+                              : scanScene  ? game.scannerSceneLength()
                               : windowScene ? game.windowSceneLength()
                               : climbScene ? game.climbDuration()
                                            : game.walkDuration();
@@ -505,6 +518,9 @@ int runCapture(const Options& o) {
             game.setClimbTime(t);
         } else if (huntScene) {
             game.stepHuntScene(t, dt);  // the world steps itself (doors included)
+            return;
+        } else if (scanScene) {
+            game.stepScannerScene(t, dt);
             return;
         } else {
             game.setWalkTime(t);
@@ -538,9 +554,20 @@ int runCapture(const Options& o) {
     for (int i = 0; i < frames; ++i) {
         const float t = o.start + float(i) * dt;
         if (huntScene && game.huntSceneDone(t)) break;
+        if (scanScene && game.scannerSceneDone(t)) break;
         stepScene(t);
         if (audio) audio->frame(game, i);
         ++written;
+        if (scanScene) {
+            // what each creature is doing, and what the scanner shows
+            std::string line;
+            for (const Hunter& h : game.hunters())
+                line += std::format("{} {:.1f} m, ", toString(h.state()), length(h.bodyCenter() - game.camera().position));
+            const Scanner& sc = game.scanner();
+            line += std::format("scanner pulse {}: {} blips", sc.pulses(), sc.blips().size());
+            if (game.scannerSeenAt() >= 0.0f) line += std::format("; one in view since {:.2f} s", game.scannerSeenAt());
+            if (i % 15 == 0) log::info("  t={:.2f}s frame {}: {}", t, i + 1, line);
+        }
         if (huntScene && !game.hunters().empty()) {
             const Hunter& h = game.hunters()[0];
             std::string line = std::format("{} hp {}{}", toString(h.state()), h.health(),
