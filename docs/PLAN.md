@@ -26,7 +26,7 @@ Custom C++20 engine on DirectX 12 with DXR ray tracing (RTX 4090 Laptop GPU, ray
 | 14 | Round 13: sound (mixer, window output, WAV beside every capture, ~25 sounds, credits) | **Done (round 13)**: see Sound |
 | 15 | Round 14: the approach (crawl in on walls and ceiling, stop, hiss, crouch, leap from any surface), turning round without a snap | **Done (round 14)**: see The approach |
 | 16 | Round 15: lights without a cap: sample a few lights per pixel by importance instead of shadow-testing all of them (see Viewports, "How many lights") | Proposed |
-| 17 | Round 16: the climbing film (floor, wall, ceiling, wall, floor, close up) | Planned |
+| 17 | Round 16: the threat filmed close; the climbing film, plain and with the crawl overlay (see "The climb") | Done |
 | 18 | Round 17: the motion scanner (blips on the minimap and map) | Planned |
 | 19 | Round 18: final pass (re-measure, every film with sound) | Planned |
 
@@ -398,7 +398,7 @@ laptop).
 **The sounds** (`assets/sounds`, 23 MP3s, about 1 MB). Each was generated with ElevenLabs Sound
 Effects (v3) through GlenTools from a prompt written for it. `assets/sounds/CREDITS.md` lists
 every file with what it's for, its prompt, its length, its request id and the licence note
-(paid ElevenLabs plans allow commercial use; the account's plan was not checked from here).
+(made on a paid ElevenLabs plan, confirmed by Glen: commercial use, games and YouTube allowed).
 Swapping one means dropping in a file with the same name.
 
 **The mixer** (`src/audio/Mixer.*`, no Windows; the same for the window and the captures):
@@ -483,9 +483,10 @@ is). In `--scene approach` you stand still and don't shoot; seed 1234, a derelic
     gets the ceiling (45%), the right wall or the left wall, from a hash of the cell, so a
     re-route doesn't reshuffle the cells ahead. Rooms and doorways are still floor.
   - It charges at 3 m/s (was 4).
-- **Threat (1.5 s):** within 5 m with a clear line to you, it stops.
-  - It rears: thorax, neck and head pivot up to 40° about the waist, away from the surface it
-    is on. On the ceiling that's leaning down at you; on a wall, swinging out into the corridor.
+- **Threat (1.5 s):** within 5 m with a clear line to you, it stops (3.2 m since round 16; see
+  "The threat, filmed").
+  - It rears: thorax, neck and head pivot up to 40° about the waist (49° since round 16), away
+    from the surface it is on. On the ceiling that's leaning down at you; on a wall, swinging out into the corridor.
   - Its head turns to you, its jaws open wide and quiver, and its scythes rise.
   - Its seams and throat flare, lighting the surface it's on.
   - A deeper, closer hiss than the one it gives on spotting you.
@@ -548,6 +549,50 @@ is). In `--scene approach` you stand still and don't shoot; seed 1234, a derelic
 - Deaths 6.5 per 10 min (was 9.0).
 - Creatures in view 22 s per 10 min (was 10.8).
 - Killed before seeing one: 1 of 30 runs.
+
+## The threat, filmed (round 16)
+
+At 5 m the head was about 40 px tall on a 1080p screen, and in `approach_after` a sparking
+cable hung between it and the camera. What changed, and why:
+- `kThreatRange` 5 → 3.2 m: the head is about three times bigger on screen. It still threatens
+  before `kLeapRange` (3.3 m), because `Hunter` now only leaps straight from a chase if the
+  approach is off, it threatened in the last 4 s, or you are within 2.2 m.
+- Rear 0.7 → 0.85 rad (40° → 49°), and the threat jaw opens to 1.05 (with a quiver), so the
+  pale inside of the jaws faces the camera.
+- `--scene threat` (`film_threat`, seed 1234): a lit corridor with no sparks, and
+  `Hunter::setHuntSurface(2)` keeps it on the ceiling. Threat 8.2 s at 3.1 m (frame 265:
+  reared down off the ceiling, jaws open at the camera), coil 9.7 s (frame 300), leap 10.3 s
+  (frame 316).
+- Encounters afterwards (`encounters_new`): first seen 74 s mean, 58 s median (was 71 / 58),
+  first death 81 s (was 87), 6.2 deaths per 10 min (was 6.5), 21.7 s in view, killed before
+  seeing one in 2 of 30 runs (was 1). `film_approach` re-rendered: threat at 3.2 m on the
+  left wall, coil 10.2 s, leap 10.8 s.
+
+## The climb (round 16)
+
+`--scene climb` (`film_climb`) and the same with `--overlay` (`film_climb_overlay`): same
+seed, same timing, frame for frame, so the two cut together.
+- **The corridor:** the best straight run of 5+ cells, scored for length, lit (+60) or dim
+  (+30), and against low pipes, broken and window pieces, clutter and spark emitters within a
+  cell. On seed 1234 it is 20 m of lit corridor, and on the way down the left wall it crawls past a viewport.
+- **The route** (u round the cross-section as a function of s, eased between keys): floor,
+  up the right wall, the wall, the edge into the ceiling (slowed from 0.75 to 0.32 m/s),
+  ceiling, down the left wall, the floor. 27.5 s.
+- **Camera:** seven setups, cut on which stage the thorax is in: low ahead, on the feet at
+  the wall's foot, across from it on the wall, a slow pass under the edge (2.4 m of dolly),
+  under it on the ceiling, across from it on the far wall, low again. Flashlight off; no
+  gun, no HUD, no hunters.
+- **The overlay** (`src/game/CrawlOverlay.*`): drawn on the rendered frame on the CPU,
+  in Segoe UI through stb_truetype. The surface strip under it and its normal ("up"), each
+  leg's femur and tibia in its colour, next-foothold rings lying flat on their surface, the
+  dashed step arc of each swinging leg, labels kept clear of each other, the stage caption and
+  a step-cycle chart (planted | swinging, split at `kDuty`). `Creature::setKeepLegs` makes
+  `pose` keep each leg's solved hip, knee, claw and footholds (`Creature::legs()`).
+- **Tail fix found here:** each tail segment sat at its own s, so where the route also moves
+  round the cross-section (onto a wall) the segments pulled apart and floated. They are now
+  chained at their rest spacing from the pelvis back. This affects every creature film a
+  little; `film_threat` and both climb films were rendered after it, `film_approach`, hunt and
+  fight before.
 
 ## The walking weave (fixed after round 10)
 

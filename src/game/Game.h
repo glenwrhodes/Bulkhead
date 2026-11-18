@@ -135,6 +135,25 @@ public:
     float crawlU(float s) const;
     float crawlS(float t) const;  // distance along its path at scene time t
 
+    // ---- the climb (round 15) ----
+    // The crawl as a showcase (capture --scene climb, ~25 s): along a lit straight corridor
+    // the creature crawls on the floor, up the right wall, slowly through the edge where
+    // wall meets ceiling, along the ceiling, down the left wall and back to the floor,
+    // filmed from six close setups that cut on its progress. False if no corridor is long
+    // enough. The overlay version draws the system over the same frames (CrawlOverlay).
+    bool setupClimbScene();
+    float climbDuration() const { return climb_.duration; }
+    void setClimbTime(float t);
+    struct ClimbInfo {
+        float s = 0.0f;               // the creature's place on its path
+        const char* stage = "";       // floor, wall, the edge, ceiling, ...
+        int shot = 0;                 // which camera setup
+    };
+    ClimbInfo climbInfo() const;
+    float climbU(float s) const;      // round the cross-section at s
+    void keepCreatureLegs(bool on) { creature_.setKeepLegs(on); }
+    Mood climbMood() const { return climb_.mood; }  // the corridor's mood (at its middle)
+
     // ---- sound (part 3) ----
     // Call once a frame, after the game has stepped (window, captures alike): the one-shots
     // since the last call (footsteps, the gun and its hits, claws landing, hisses, screeches,
@@ -190,7 +209,9 @@ public:
     // fight: you hold a corridor while one charges; four hits and it dies.
     // approach (round 13, capture --scene approach): you stand still and don't shoot; one
     // that has spotted you closes in and leaps (the before/after film of the approach).
-    bool setupHuntScene(bool fight, bool approach = false);
+    // threat (capture --scene threat): the approach filmed for the threat itself: a lit
+    // corridor (no derelict sparks), the creature kept to the ceiling, charging at once.
+    bool setupHuntScene(bool fight, bool approach = false, bool threatShot = false);
     void stepHuntScene(float t, float dt);
     float huntSceneLength() const { return scene_.length; }
     bool huntSceneDone(float t) const { return scene_.endAt >= 0.0f && t >= scene_.endAt; }
@@ -221,6 +242,7 @@ private:
     struct HuntScene {
         bool fight = false;
         bool approach = false;
+        bool threatShot = false;
         std::vector<Int2> run;      // the corridor, player's end first
         Vec3 dir;                   // along the run, away from the player's end
         Vec3 start;                 // player's eye at t = 0
@@ -335,6 +357,18 @@ private:
         float length = 17.0f;
     } window_;
     float windowU(float s) const;
+    struct ClimbScene {
+        std::vector<float> keyS, keyU;    // u at each key (eased between)
+        std::vector<int> keyStage;        // the stage from each key to the next
+        std::vector<float> tableS, tableT;  // distance -> time
+        float s0 = 0.0f, sEnd = 0.0f, duration = 0.0f;
+        Vec3 target;                      // where the camera looks (eased)
+        float lastT = -1.0f;
+        int lastShot = -1;
+        Mood mood = Mood::Lit;
+    } climb_;
+    float climbS(float t) const;
+    int climbStage(float s) const;
     // kit models
     int gunModel_ = -1, armsModel_ = -1, flashModel_ = -1, boltModel_ = -1, sparkModel_ = -1, scorchModel_ = -1;
     Vec3 muzzleLocal_{0, 0.022f, -0.168f};

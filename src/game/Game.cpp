@@ -1247,7 +1247,8 @@ void Game::setCrawlTime(float t) {
 // The hunt and fight scenes: the real AI, a scripted player
 // ---------------------------------------------------------------------------
 
-bool Game::setupHuntScene(bool fight, bool approach) {
+bool Game::setupHuntScene(bool fight, bool approach, bool threatShot) {
+    if (threatShot) approach = true;
     if (approach) fight = true;  // (the same corridor choice: enough light to see it come)
     const Maze& m = maze_;
     auto step = [](Int2 c, int d) { return Int2{c.x + kDx[d], c.y + kDy[d]}; };
@@ -1272,7 +1273,8 @@ bool Game::setupHuntScene(bool fight, bool approach) {
                 const Mood mood = level_.sections.moodAt(run[run.size() / 2]);
                 int score = int(std::min<size_t>(run.size(), 8)) * 3;
                 // hunt: the dark, the flashlight and its glow; fight: enough light to see it die
-                if (fight) score += mood == Mood::Dim ? 30 : mood == Mood::Derelict ? 24 : mood == Mood::Dark ? 10 : 0;
+                if (threatShot) score += mood == Mood::Lit ? 30 : mood == Mood::Dim ? 15 : 0;  // (no sparks)
+                else if (fight) score += mood == Mood::Dim ? 30 : mood == Mood::Derelict ? 24 : mood == Mood::Dark ? 10 : 0;
                 else score += mood == Mood::Derelict ? 30 : mood == Mood::Dark ? 26 : mood == Mood::Dim ? 12 : 0;
                 for (Int2 r : run) {
                     for (const LowPipe& lp : level_.lowPipes)
@@ -1292,6 +1294,7 @@ bool Game::setupHuntScene(bool fight, bool approach) {
     scene_ = HuntScene{};
     scene_.fight = fight && !approach;
     scene_.approach = approach;
+    scene_.threatShot = threatShot;
     scene_.run = best;
     scene_.dir = dirVector(Dir(bestD));
     scene_.start = cellCenter(best[0]) + scene_.dir * 0.5f + Vec3{0, kEyeHeight, 0};
@@ -1312,6 +1315,7 @@ bool Game::setupHuntScene(bool fight, bool approach) {
     respawnAt_.clear();
     huntersWanted_ = 0;
     spawnHunterAt(far, fight && !approach ? 0 : 2, maze_.params().seed * 977u + (approach ? 3u : fight ? 1u : 2u));
+    if (threatShot && !hunters_.empty()) hunters_[0].setHuntSurface(2);
     return !hunters_.empty();
 }
 
@@ -1337,8 +1341,9 @@ void Game::stepHuntScene(float t, float dt) {
                              h.state() == HunterState::Coil;
         if (scene_.approach) {
             // standing your ground, not firing: it has spotted you and comes; you watch it
-            if (t >= 0.5f && h.state() == HunterState::Roam) h.alert(huntWorld(false), false);
-            if (h.alive()) aimAt(h.bodyCenter() * 0.4f + head * 0.6f, 3.0f);
+            if (t >= 0.5f && h.state() == HunterState::Roam) h.alert(huntWorld(false), scene_.threatShot);
+            // (the threat shot keeps its head in the middle of the frame)
+            if (h.alive()) aimAt(scene_.threatShot ? head : h.bodyCenter() * 0.4f + head * 0.6f, scene_.threatShot ? 4.0f : 3.0f);
             camera_.yaw = scene_.yaw;
             camera_.pitch = scene_.pitch;
         } else if (scene_.fight) {
@@ -1556,6 +1561,208 @@ void Game::collectSounds(std::vector<SoundEvent>& events, std::vector<SoundLoop>
     for (SoundLoop& l : loops)
         if (l.positional) l.occlusion = occlusionTo(l.pos);
     soundTime_ = time_;
+}
+
+// ---------------------------------------------------------------------------
+// The climb (round 15): the crawl as a showcase
+// ---------------------------------------------------------------------------
+
+namespace {
+const char* kClimbStages[] = {"floor", "floor to wall", "wall", "the edge: wall to ceiling", "ceiling",
+                              "ceiling to wall", "wall", "wall to floor", "floor"};
+}
+
+bool Game::setupClimbScene() {
+    creatureOn_ = false;
+    if (!creature_.valid()) return false;
+    const Maze& m = maze_;
+    auto step = [](Int2 c, int d) { return Int2{c.x + kDx[d], c.y + kDy[d]}; };
+    auto straightAlong = [&](Int2 c, int d) {
+        if (!m.inBounds(c) || m.kind(c) != CellKind::Corridor) return false;
+        return m.passable(c.x, c.y, Dir(d)) && m.passable(c.x, c.y, Dir((d + 2) & 3)) &&
+               !m.passable(c.x, c.y, Dir((d + 1) & 3)) && !m.passable(c.x, c.y, Dir((d + 3) & 3));
+    };
+    // a long straight corridor, lit (black armour reads by the fixtures' highlights), with
+    // nothing in it the creature would crawl through
+    int bestScore = -100000, bestD = 0;
+    std::vector<Int2> best;
+    for (int y = 0; y < m.height(); ++y)
+        for (int x = 0; x < m.width(); ++x)
+            for (int d = 0; d < 4; ++d) {
+                Int2 c{x, y};
+                if (!straightAlong(c, d) || straightAlong(step(c, (d + 2) & 3), d)) continue;
+                std::vector<Int2> run;
+                while (straightAlong(c, d)) {
+                    run.push_back(c);
+                    c = step(c, d);
+                }
+                if (run.size() < 5) continue;
+                const Mood mood = level_.sections.moodAt(run[run.size() / 2]);
+                int score = int(std::min<size_t>(run.size(), 7)) * 4 +
+                            (mood == Mood::Lit ? 60 : mood == Mood::Dim ? 30 : mood == Mood::Dark ? -30 : 0);
+                for (Int2 r : run) {
+                    for (const LowPipe& lp : level_.lowPipes)
+                        if (std::abs(lp.center.x - cellCenter(r).x) < 2.1f && std::abs(lp.center.z - cellCenter(r).z) < 2.1f)
+                            score -= 1000;
+                    const int cell = r.y * m.width() + r.x;
+                    for (const PlacedModel& pm : level_.placed) {
+                        if (pm.cell != cell) continue;
+                        const std::string& nm = kit_.model(pm.model).name;
+                        if (nm == "corridor_straight_broken" || nm == "corridor_straight_window") score -= 20;
+                        else if (nm == "pipe_burst" || nm == "debris" || nm == "beacon") score -= 8;
+                    }
+                    // sparks falling through the shot pull the eye off the feet
+                    for (const Emitter& e : level_.emitters)
+                        if (e.kind == Emitter::Spark && std::abs(e.position.x - cellCenter(r).x) < 4.5f &&
+                            std::abs(e.position.z - cellCenter(r).z) < 4.5f)
+                            score -= 25;
+                }
+                if (score > bestScore) {
+                    bestScore = score;
+                    best = run;
+                    bestD = d;
+                }
+            }
+    if (best.empty()) return false;
+    crawlPath_ = CrawlPath(best);
+    climb_ = ClimbScene{};
+    climb_.mood = level_.sections.moodAt(best[best.size() / 2]);
+    const CrawlProfile& pr = crawlPath_.profile();
+    const float R = pr.rightWallU(), C = pr.ceilingU(), Lw = pr.leftWallU(), T = pr.length();
+    // stages: floor, up, wall, the edge, ceiling, down, wall, down, floor (metres along)
+    float len[] = {2.4f, 2.0f, 1.8f, 2.6f, 2.0f, 2.0f, 1.4f, 2.0f, 1.2f};
+    const float u[] = {0.0f, R, R, C, C, Lw, Lw, T, T};  // u at the end of each stage
+    climb_.s0 = 2.0f;  // the body all on the path
+    float total = 0.0f;
+    for (float l : len) total += l;
+    const float room = crawlPath_.length() - climb_.s0 - 1.6f;  // (its head is ~1 m ahead)
+    if (room < total) {
+        const float k = std::max(0.6f, room / total);
+        for (float& l : len) l *= k;
+    }
+    float s = climb_.s0;
+    climb_.keyS.push_back(s);
+    climb_.keyU.push_back(0.0f);
+    for (int i = 0; i < 9; ++i) {
+        climb_.keyStage.push_back(i);
+        s += len[i];
+        climb_.keyS.push_back(s);
+        climb_.keyU.push_back(u[i]);
+    }
+    climb_.keyStage.push_back(8);
+    climb_.sEnd = s;
+    // distance -> time: 0.75 m/s, slowing to 0.32 m/s through the edge
+    float t = 0.0f;
+    for (float x = climb_.s0; x <= climb_.sEnd + 1e-3f; x += 0.01f) {
+        const float e0 = climb_.keyS[3], e1 = climb_.keyS[4];
+        float v = 0.75f;
+        if (x > e0 - 0.6f && x < e1 + 0.6f) {
+            const float k = std::min(smooth01(e0 - 0.6f, e0 + 0.2f, x), 1.0f - smooth01(e1 - 0.2f, e1 + 0.6f, x));
+            v = 0.75f + (0.32f - 0.75f) * k;
+        }
+        climb_.tableS.push_back(x);
+        climb_.tableT.push_back(t);
+        t += 0.01f / v;
+    }
+    climb_.duration = climb_.tableT.back() + 0.8f;
+    flashlightOn_ = false;  // (the corridor's own light: the flashlight would flatten it)
+    hunters_.clear();
+    huntersWanted_ = 0;
+    creatureOn_ = true;
+    setClimbTime(0.0f);
+    (void)bestD;
+    return true;
+}
+
+float Game::climbS(float t) const {
+    const auto& T = climb_.tableT;
+    const auto& S = climb_.tableS;
+    if (T.empty()) return 0.0f;
+    if (t <= 0.0f) return S.front();
+    if (t >= T.back()) return S.back();
+    const size_t i = size_t(std::upper_bound(T.begin(), T.end(), t) - T.begin());
+    const float f = (t - T[i - 1]) / std::max(1e-6f, T[i] - T[i - 1]);
+    return S[i - 1] + (S[i] - S[i - 1]) * f;
+}
+
+float Game::climbU(float s) const {
+    const auto& K = climb_.keyS;
+    if (K.empty()) return 0.0f;
+    if (s <= K.front()) return climb_.keyU.front();
+    if (s >= K.back()) return climb_.keyU.back();
+    const size_t i = size_t(std::upper_bound(K.begin(), K.end(), s) - K.begin());
+    return climb_.keyU[i - 1] + (climb_.keyU[i] - climb_.keyU[i - 1]) * smooth01(K[i - 1], K[i], s);
+}
+
+int Game::climbStage(float s) const {
+    const auto& K = climb_.keyS;
+    for (size_t i = 1; i < K.size(); ++i)
+        if (s < K[i]) return climb_.keyStage[i - 1];
+    return 8;
+}
+
+Game::ClimbInfo Game::climbInfo() const {
+    ClimbInfo ci;
+    ci.s = climbS(time_);
+    const float sT = ci.s - creature_.restPivot("thorax").z;
+    const int st = climbStage(sT);
+    ci.stage = kClimbStages[st];
+    ci.shot = climb_.lastShot;
+    return ci;
+}
+
+void Game::setClimbTime(float t) {
+    const float s = climbS(t);
+    CreaturePose p;
+    p.s = s;
+    p.uOf = [this](float ss) { return climbU(ss); };
+    p.time = t;
+    p.jaw = 0.08f + 0.06f * std::sin(t * 1.4f);
+    p.glow = 0.95f + 0.1f * std::sin(t * 2.1f);
+    creature_.pose(crawlPath_, p);
+
+    // the camera: one setup per stage of the climb (thorax position), placed relative to
+    // the creature along the corridor: metres ahead, to the right, up from the floor
+    const float sT = s - creature_.restPivot("thorax").z;
+    const int st = climbStage(sT);
+    struct Setup {
+        float ahead, right, up;
+    };
+    int shot = st == 0 ? 0 : st == 1 ? 1 : st == 2 ? 2 : st == 3 ? 3 : st == 4 ? 4 : st <= 6 ? 5 : 6;
+    static const Setup kSetups[] = {
+        {2.4f, -0.70f, 0.45f},  // 0 low on the floor ahead of it, coming at the camera
+        {1.3f, -0.75f, 0.75f},  // 1 its feet taking hold of the right wall
+        {0.6f, -0.85f, 1.35f},  // 2 across from it on the wall
+        {1.8f, -0.50f, 1.30f},  // 3 the edge: a slow pass (ahead goes 1.8 -> -0.6)
+        {1.6f, 0.00f, 1.00f},   // 4 under it on the ceiling, looking up
+        {0.9f, 0.80f, 1.20f},   // 5 across from it, down onto the left wall
+        {2.2f, 0.60f, 0.50f},   // 6 low again as it comes back down to the floor
+    };
+    Setup su = kSetups[shot];
+    if (shot == 3) {
+        const float k = smooth01(climb_.keyS[3], climb_.keyS[4], sT);
+        su.ahead = 1.8f + (-0.6f - 1.8f) * k;
+    }
+    const float sc = std::clamp(sT + su.ahead, 0.0f, crawlPath_.length());
+    const Vec3 camPos = crawlPath_.point(sc, 0.0f) + crawlPath_.right(sc) * su.right + Vec3{0, su.up, 0};
+    // look at its middle, a little toward the legs; eased (a cut snaps it)
+    const Vec3 want = creature_.bodyCenter();
+    const float dt = climb_.lastT < 0.0f ? 0.0f : std::max(0.0f, t - climb_.lastT);
+    if (shot != climb_.lastShot || climb_.lastT < 0.0f) climb_.target = want;
+    else climb_.target = climb_.target + (want - climb_.target) * (1.0f - std::exp(-6.0f * dt));
+    climb_.lastShot = shot;
+    climb_.lastT = t;
+    const Vec3 d = climb_.target - camPos;
+    Camera c;
+    c.position = camPos;
+    c.yaw = std::atan2(-d.x, -d.z);
+    c.pitch = std::clamp(std::atan2(d.y, std::sqrt(d.x * d.x + d.z * d.z)), -1.3f, 1.3f);
+    camera_ = c;
+    sway_ = {};
+    time_ = t;
+    updateLighting();
+    reveal();
+    updateEffects();
 }
 
 // ---------------------------------------------------------------------------

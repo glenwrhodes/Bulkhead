@@ -224,6 +224,25 @@ bulkhead_png_test(film_window film
 bulkhead_png_test(film_approach film
   GAME  --capture "${CAP}/approach" --scene approach --res 1920x1080 --fps 30 --spp 16 --seed 42
   CHECK --dir "${CAP}/approach" --at-least 200 --width 1920 --height 1080 --expect-motion)
+# The climb (round 15): the crawl as a showcase, floor, wall, the wall-ceiling edge,
+# ceiling, wall, floor, from close setups; and the same frames with the system drawn on
+# them (legs' bones, footholds, step arcs, the surface and its up, the gait), to cut together.
+bulkhead_png_test(film_climb film
+  GAME  --capture "${CAP}/climb" --scene climb --res 1920x1080 --fps 30 --spp 16 --seed ${FILM_SEED} --no-hud
+  CHECK --dir "${CAP}/climb" --at-least 500 --width 1920 --height 1080 --expect-motion)
+bulkhead_png_test(film_climb_overlay film
+  GAME  --capture "${CAP}/climb_overlay" --scene climb --overlay --res 1920x1080 --fps 30 --spp 16 --seed ${FILM_SEED} --no-hud
+  CHECK --dir "${CAP}/climb_overlay" --at-least 500 --width 1920 --height 1080 --expect-motion)
+# Both at 2 frames a second, small, for looking them over. Label "diag".
+add_test(NAME climb_preview COMMAND Bulkhead --capture "${CAP}/climb_preview" --scene climb --overlay --fps 2
+         --res 960x540 --spp 8 --seed ${FILM_SEED} --no-hud)
+set_tests_properties(climb_preview PROPERTIES LABELS diag RUN_SERIAL TRUE)
+
+# The threat filmed where it reads: a lit corridor without sparks, the creature on the
+# ceiling, its head kept in the middle of the frame, through the coil and the leap.
+bulkhead_png_test(film_threat film
+  GAME  --capture "${CAP}/threat" --scene threat --res 1920x1080 --fps 30 --spp 16 --seed ${FILM_SEED}
+  CHECK --dir "${CAP}/threat" --at-least 150 --width 1920 --height 1080 --expect-motion)
 add_test(NAME approach_after COMMAND Bulkhead --capture "${CAP}/approach_after" --scene approach --res 1920x1080
          --fps 30 --spp 16 --seed ${FILM_SEED})
 add_test(NAME approach_original COMMAND Bulkhead --capture "${CAP}/approach_original" --scene approach --hunt original

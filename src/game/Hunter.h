@@ -88,7 +88,9 @@ public:
     static constexpr float kDriftSpeed = 1.5f;  // round 11: heading for roughly where you are
     // round 13: the approach
     static constexpr float kApproachSpeed = 3.0f;   // charging over the walls and ceiling
-    static constexpr float kThreatRange = 5.0f;     // stops to threaten within this, line clear
+    // stops to threaten within this, line clear (5 m read as a 40 px head on a 1080p screen;
+    // at 3.2 m the head and open jaws are three times the size)
+    static constexpr float kThreatRange = 3.2f;
     static constexpr float kThreatTime = 1.5f;      // rear, jaws, scythes, hiss
     static constexpr float kCoilTime = 0.6f;        // sinks low before it springs
     static constexpr float kTurnTime = 0.8f;        // turning round on its path
@@ -144,6 +146,13 @@ private:
     // and branches off from there, so the new bend starts metres ahead and nothing under it
     // moves. Never turns round. False if the goal is behind it or unreachable.
     bool routeAhead(const Maze& maze, Int2 goal);
+  public:
+    // Scenes: while hunting, keep to this surface in straight corridors (0 floor, 1 right
+    // wall, 2 ceiling, 3 left wall) instead of picking per cell; -1 picks per cell.
+    void setHuntSurface(int s) { huntSurface_ = s; }
+
+  private:
+    int huntSurface_ = -1;
     // Round 13: a hunting re-route: routeAhead, or (the goal behind it) turn round.
     void reaim(const Maze& maze, Int2 goal);
     // Which surface cell k of a new path gets (0 floor, 1 right wall, 2 ceiling, 3 left wall).

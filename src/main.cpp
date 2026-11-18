@@ -27,6 +27,7 @@
 #include "audio/AudioDevice.h"
 #include "audio/Mixer.h"
 #include "game/AudioRecorder.h"
+#include "game/CrawlOverlay.h"
 #include "game/Encounters.h"
 #include "game/Game.h"
 #include "render/Gpu.h"
@@ -441,6 +442,16 @@ int runCapture(const Options& o) {
                   game.crawlDuration(), game.crawlPath().length(), game.crawlPath().project(game.camera().position),
                   toString(game.moodAtCamera()));
     }
+    const bool climbScene = o.scene == "climb";
+    if (climbScene) {
+        if (!game.setupClimbScene()) {
+            log::error("Scene 'climb': no straight corridor long enough (or no creature)");
+            return 1;
+        }
+        game.keepCreatureLegs(o.overlay);
+        log::info("Scene 'climb': {:.1f} s along {:.1f} m of corridor in a {} section{}", game.climbDuration(),
+                  game.crawlPath().length(), toString(game.climbMood()), o.overlay ? ", with the overlay" : "");
+    }
     const bool windowScene = o.scene == "window";
     if (windowScene) {
         if (!game.setupWindowScene()) {
@@ -450,10 +461,10 @@ int runCapture(const Options& o) {
         log::info("Scene 'window': {:.1f} s, {} viewports in the ship, filmed in a {} section", game.windowSceneLength(),
                   game.level().viewports.size(), toString(game.moodAtCamera()));
     }
-    const bool huntScene = o.scene == "hunt" || o.scene == "fight" || o.scene == "approach";
+    const bool huntScene = o.scene == "hunt" || o.scene == "fight" || o.scene == "approach" || o.scene == "threat";
     if (huntScene) {
         game.setHuntTuning(huntTuning(o));  // (--hunt original: the creatures as before round 13)
-        if (!game.setupHuntScene(o.scene == "fight", o.scene == "approach")) {
+        if (!game.setupHuntScene(o.scene == "fight", o.scene == "approach", o.scene == "threat")) {
             log::error("Scene '{}': no corridor for it (or the kit has no creature)", o.scene);
             return 1;
         }
@@ -464,6 +475,7 @@ int runCapture(const Options& o) {
                               : crawlScene ? game.crawlDuration()
                               : huntScene  ? game.huntSceneLength()
                               : windowScene ? game.windowSceneLength()
+                              : climbScene ? game.climbDuration()
                                            : game.walkDuration();
     const int frames = o.frames > 0 ? o.frames : int(std::ceil((sceneLength - o.start) * float(o.fps)));
     log::info("Capture: {} frames at {}x{}, {} fps, {} spp, RT {}, seed {} -> {}", frames, o.width, o.height, o.fps,
@@ -489,6 +501,8 @@ int runCapture(const Options& o) {
             game.setCrawlTime(t);
         } else if (windowScene) {
             game.setWindowTime(t);
+        } else if (climbScene) {
+            game.setClimbTime(t);
         } else if (huntScene) {
             game.stepHuntScene(t, dt);  // the world steps itself (doors included)
             return;
@@ -537,8 +551,9 @@ int runCapture(const Options& o) {
                 lastHuntLog = line;
             }
         }
-        game.buildInstances(instances, !game.playerDead() || game.deathTime() < 0.25f);
-        if (!fireScene && !crawlScene && !windowScene && game.reachedExit()) exitFlash = std::min(1.0f, exitFlash + dt / 1.2f);
+        // (the climb's camera is not the player: no gun in its shots)
+        game.buildInstances(instances, !climbScene && (!game.playerDead() || game.deathTime() < 0.25f));
+        if (!fireScene && !crawlScene && !windowScene && !climbScene && game.reachedExit()) exitFlash = std::min(1.0f, exitFlash + dt / 1.2f);
         FrameSettings s;
         s.camera = game.camera();
         s.rayTracing = o.rayTracing;
@@ -553,8 +568,21 @@ int runCapture(const Options& o) {
         s.blackout = game.blackout();
         if (game.playerDead()) s.hud = false;
         const fs::path file = dir / std::format("frame_{:04}.png", i + 1);
-        pending.push_back(std::async(std::launch::async,
-                                     [img = renderer.renderToImage(instances, s), file] { return img.writePng(file); }));
+        Image frame = renderer.renderToImage(instances, s);
+        if (climbScene && o.overlay) {
+            // the crawl's machinery drawn over the same frame (src/game/CrawlOverlay.h)
+            const Game::ClimbInfo ci = game.climbInfo();
+            CrawlOverlayInput ov;
+            ov.creature = &game.creature();
+            ov.path = &game.crawlPath();
+            ov.camera = game.camera();
+            ov.uOf = [&game](float x) { return game.climbU(x); };
+            ov.sBody = ci.s - game.creature().restPivot("thorax").z;
+            ov.stage = ci.stage;
+            ov.time = t;
+            drawCrawlOverlay(frame, ov);
+        }
+        pending.push_back(std::async(std::launch::async, [img = std::move(frame), file] { return img.writePng(file); }));
         drain(8);
         if (writeFailed) {
             log::error("Could not write frames to {}", dir.string());

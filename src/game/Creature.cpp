@@ -317,7 +317,7 @@ void Creature::pose(const CrawlPath& path, const CreaturePose& p) {
         const Bone& w = bone("waist");
         const Vec3 pivot = w.world.point(w.pivot);
         const Vec3 right = normalize(w.world.dir({1, 0, 0}));
-        const Mat4 lift = Mat4::translation(pivot) * axisAngle(right, 0.7f * p.rear) * Mat4::translation(-pivot);
+        const Mat4 lift = Mat4::translation(pivot) * axisAngle(right, 0.85f * p.rear) * Mat4::translation(-pivot);
         for (const char* n : {"thorax", "neck", "head"}) bone(n).world = lift * bone(n).world;
     }
     // the head turns toward what it is looking at, within limits
@@ -355,7 +355,14 @@ void Creature::pose(const CrawlPath& path, const CreaturePose& p) {
             const float sway = 0.09f * w * std::sin(p.time * 2.4f - float(k) * 0.75f) +
                                0.05f * w * std::sin(p.s * 2.1f - float(k) * 0.6f);
             Mat4 f = bodyFrame(path, p, -b.pivot.z, (b.pivot.y + 0.025f * float(k) + bob * 0.5f) * sink, b.pivot.x + sway);
-            const Vec3 o = column(f, 3);
+            // chained at its rest spacing: where the route also moves round the cross-section
+            // (climbing a wall), placing each segment at its own s alone pulled them apart
+            Vec3 o = column(f, 3);
+            {
+                const Vec3 d = o - prevWorld;
+                const float dl = length(d), rest = length(b.pivot - prevRest);
+                if (dl > 1e-5f) o = prevWorld + d * (rest / dl);
+            }
             const Vec3 up = column(f, 1);
             const Vec3 fwdW = normalize(prevWorld - o);
             const Vec3 fwdR = normalize(prevRest - b.pivot);
@@ -465,6 +472,13 @@ void Creature::pose(const CrawlPath& path, const CreaturePose& p) {
         const Vec3 n = normalize(cross(K - H, Fr - H));
         femur.world = frameAlong(H, K - H, n) * inverseRigid(frameAlong(H0, K0 - H0, n0));
         tibia.world = frameAlong(K, Fr - K, n) * inverseRigid(frameAlong(K0, F0 - K0, n0));
+        if (keepLegs_) {  // (for the climb film's overlay)
+            LegState& ls = legState_[size_t(l)];
+            const auto [fromP, fromN] = foothold(k);
+            const auto [toP, toN] = foothold(k + 1.0f);
+            ls = LegState{H, K, Fr, fromP, toP, fromN, toN, planted_[size_t(l)],
+                          planted_[size_t(l)] ? 0.0f : (ph - kDuty) / (1.0f - kDuty), ph};
+        }
     }
 
     // a hit jolts the whole body back and the head up; the jaws snap wide

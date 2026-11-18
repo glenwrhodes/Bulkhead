@@ -88,6 +88,14 @@ milestone status are in `docs/PLAN.md`; update that table when a milestone lands
 - The approach (threat, coil, leap from any surface) is `HuntTuning::approach`, on in the
   current tuning and off with `--hunt original`. Captures of the hunt, fight and approach
   scenes take `--hunt`; `level_tests` and `audio_tests` run them with the current tuning.
+  `kThreatRange` (3.2 m) sits under `kLeapRange` (3.3 m); a chase only leaps straight when
+  the approach is off, it threatened in the last 4 s, or you are within 2.2 m. Keep that
+  gate if either range moves, or it leaps without ever threatening.
+- `--scene climb` (and `--overlay`) is the crawl showcase: a scripted u(s) round the
+  cross-section in `Game::setupClimbScene`, no hunters. The overlay (`CrawlOverlay.*`) is
+  drawn on the CPU onto the rendered `Image`, after the GPU, from `Creature::legs()`, which
+  `pose` fills only when `setKeepLegs(true)`. Keep the overlay's projection identical to the
+  camera's (tan(fovY/2) × aspect), or the drawing slides off the legs.
 - Viewports (`corridor_straight_window`) come from their own `Rng` stream. A window cell
   still takes every draw the dressing stream would have taken (`Builder::skipDraws`). Keep it
   that way for anything new placed instead of a dressed piece: `level_tests` compares every

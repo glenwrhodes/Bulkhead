@@ -41,7 +41,7 @@ struct CreaturePose {
     Vec3 lookAt;
     float flinch = 0.0f;                    // 0..1: jolted back by a hit
     // round 13: the threat and the coil before a leap
-    float rear = 0.0f;                      // 0..1: the front lifts off the surface (up to ~40 degrees)
+    float rear = 0.0f;                      // 0..1: the front lifts off the surface (up to ~49 degrees)
     float crouch = 0.0f;                    // 0..1: the body sinks toward the surface, knees bent
     float arms = 0.0f;                      // 0..1: the scythes raised (as poseRigid's arms)
 };
@@ -83,6 +83,19 @@ public:
     Vec3 posedClaw(int leg) const;
     static const char* legName(int leg);
     Vec3 restPivot(const char* bone) const;
+
+    // What pose() worked out for each leg, kept when setKeepLegs(true) (the climb film's
+    // overlay draws it): the hip, the solved knee and claw, the foothold the claw is on or
+    // left (from) and the next one (to) with their surface normals, whether it is planted,
+    // and how far through its swing it is (0..1, planted: 0).
+    struct LegState {
+        Vec3 hip, knee, claw, from, to, nFrom, nTo;
+        bool planted = false;
+        float swing = 0.0f;
+        float cycle = 0.0f;  // where it is in its step cycle (0..1; planted below kDuty)
+    };
+    void setKeepLegs(bool on) { keepLegs_ = on; }
+    const std::array<LegState, 4>& legs() const { return legState_; }
     // Blend two rigid frames (positions lerped, axes lerped and re-orthonormalised).
     static Mat4 blendFrames(const Mat4& a, const Mat4& b, float t);
 
@@ -116,6 +129,8 @@ private:
     Vec3 head_, center_;
     float glow_ = 0.7f;
     float jaw_ = 0.0f;
+    bool keepLegs_ = false;
+    std::array<LegState, 4> legState_{};
 };
 
 }  // namespace bh

@@ -60,6 +60,10 @@ std::string usageText() {
         "                    each one costs per frame)\n"
         "  --scene approach  capture: you stand still; a creature that has spotted you closes in\n"
         "                    and leaps (the real AI; with --hunt original, as before round 13)\n"
+        "  --scene threat    capture: the approach in a lit corridor, the creature on the ceiling,\n"
+        "                    filmed for the threat (rear, jaws, hiss), the coil and the leap\n"
+        "  --scene climb     capture: the crawl itself, floor, wall, the wall-ceiling edge, ceiling\n"
+        "                    and back down, from close camera setups (--overlay: the system drawn on it)\n"
         "  --scene window    capture: walk up to a viewport on the ship's edge, the stars outside,\n"
         "                    the creature crawling past behind you in the glass, turn to face it\n"
         "  --scene weave     capture: the window's movement code, forward held, down a straight\n"
@@ -112,7 +116,7 @@ std::optional<Options> parseCommandLine(int argc, char** argv, std::string& erro
             auto v = value();
             if (!v) return std::nullopt;
             if (*v != "walk" && *v != "fire" && *v != "crawl" && *v != "hunt" && *v != "fight" && *v != "weave" &&
-                *v != "window" && *v != "approach")
+                *v != "window" && *v != "approach" && *v != "threat" && *v != "climb")
                 return bad(*v);
             o.scene = std::string(*v);
         } else if (a == "--assets") {
@@ -196,6 +200,8 @@ std::optional<Options> parseCommandLine(int argc, char** argv, std::string& erro
             if (!v) return std::nullopt;
             if (!parseNumber(*v, n) || n < 0 || n > 32) return bad(*v);
             o.testLights = n;
+        } else if (a == "--overlay") {
+            o.overlay = true;
         } else if (a == "--sweep") {
             o.sweep = true;
         } else if (a == "--no-hud") {

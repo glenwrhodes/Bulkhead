@@ -223,7 +223,7 @@ int Hunter::surfaceFor(const Maze& maze, const std::vector<Int2>& cells, size_t 
         // round 13: over the ceiling and both walls, a choice per cell (the same cell always
         // gets the same, so a re-route doesn't change the ones ahead)
         const float r = float(cellHash(c, surfaceSeed_) >> 8) * (1.0f / 16777216.0f);
-        surf = r < 0.45f ? 2 : r < 0.725f ? 1 : 3;
+        surf = huntSurface_ >= 0 ? huntSurface_ : r < 0.45f ? 2 : r < 0.725f ? 1 : 3;
     }
     if (room || doorNext) surf = 0;
     else if ((surf == 1 || surf == 3) && !straightCell(maze, c)) surf = 2;
@@ -545,7 +545,9 @@ void Hunter::update(float dt, const HuntWorld& w) {
             return;
         }
     }
-    if (state_ == HunterState::Chase && dist < kLeapRange && w.playerAlive && turnT_ < 0.0f) {
+    // the straight leap (with the approach: only after a miss, or sprung on you round a corner)
+    const bool straightLeap = !approachOn_ || threatAgain_ > 0.0f || dist < 2.2f;
+    if (state_ == HunterState::Chase && straightLeap && dist < kLeapRange && w.playerAlive && turnT_ < 0.0f) {
         Vec3 n;
         Vec3 d = normalize(w.player - head);
         if (raycastLevel(maze, *w.level, head, d, dist, *w.doorOpen, n) >= dist - 0.3f) {
@@ -617,7 +619,7 @@ void Hunter::pose(const HuntWorld& w, float dt) {
     if (state_ == HunterState::Stalk) jawTarget = stateTime_ < 1.1f ? 0.75f : 0.3f + 0.15f * std::sin(w.time * 5.0f);
     if (state_ == HunterState::Chase) jawTarget = 0.45f + 0.2f * std::sin(w.time * 9.0f);
     // round 13: jaws wide and quivering for the threat, half shut as it coils
-    if (threat) jawTarget = 0.92f + 0.08f * std::sin(w.time * 31.0f);
+    if (threat) jawTarget = 1.05f + 0.07f * std::sin(w.time * 31.0f);  // (a little past its usual widest)
     if (coil) jawTarget = 0.5f;
     jaw_ += (jawTarget - jaw_) * std::min(1.0f, dt * 8.0f);
     // the threat: rear up, scythes high; the coil: sink low, scythes still up

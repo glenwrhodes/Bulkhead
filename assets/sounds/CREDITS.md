@@ -5,11 +5,9 @@ Effects** (model `eleven_text_to_sound_v3`), through the GlenTools MCP server on
 owner's ElevenLabs account. Output: MP3, 44.1 kHz, 128 kbps. Nothing here is taken from a
 film or another game; the prompts below are the whole description each sound was made from.
 
-**Licence:** ElevenLabs' terms let paid subscribers use generated sound effects
-commercially (games, YouTube). Free-plan output carries attribution and non-commercial
-limits. The account's plan was not checked from here: confirm it is a paid plan before
-release. If it is not, these files must be replaced (CC0 packs such as Kenney's would do;
-the file names are all the game needs).
+**Licence:** generated on a paid ElevenLabs plan (confirmed by the project owner on
+2026-11-18). ElevenLabs' terms let paid subscribers use generated sound effects
+commercially, including in games and YouTube videos, without attribution.
 
 To swap a sound, drop a replacement MP3 or WAV (44.1 kHz preferred, mono or stereo) in with
 the same base name; WAV is used when no MP3 of that name exists. The game reads them at
