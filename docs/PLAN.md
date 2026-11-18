@@ -180,6 +180,21 @@ Timing run after rounds 6-7: median 6.7 ms (lit 7.5, dim 7.6, derelict 5.8, dark
   - **`--scene fight` (`film_fight`):** you hold the corridor; four hits, and its last lunge ends with it dead on its back.
   - The `level_tests` hunter checks require: the hunt reaches stalk, chase, leap and feed; the fight kills the creature with the player alive; three hits leave it alive and four kill it; and roaming hunters never move more than 0.4 m in a step.
 
+## The walking weave (fixed after round 10)
+
+**The bug:** in the window, walking weaved from side to side.
+- **Cause:** `Game::update` drew a sideways head sway (±1.2 cm) by adding it to the camera position. The next step then read the camera position back as where the player stood, so every step's sway was added into the real position.
+- **Size:** over half a sway cycle that sums to roughly 0.012 m × fps × 0.03 s, so it grew with frame rate. A side-to-side swing of 0.11 m at 30 fps, 0.36 m at 100 fps, 0.52 m at 144 fps and 0.86 m at 240 fps, all to one side of the centre line.
+- **Pressing against something:** when the player stopped against a low pipe with the key held, the bob phase froze and the same offset was added every step, sliding the player 0.9 m sideways into the wall.
+- **Why the films missed it:** the scripted walk (`setWalkTime`) sets the position outright each frame, so they never showed this.
+
+**The fix:** the sway is now only a view offset (`Game::sway_`). It is subtracted before each step and cleared wherever the camera is set directly. The easing of walking speed, bob strength and crouch also changed from `min(1, rate·dt)` to `1 − e^(−rate·dt)`, which gives the same result at any frame rate.
+
+**Checks:**
+- `--scene weave` (ctest `weave_smoke`, and `weave_capture`, label `weave`) drives the window's own `update` with the forward key held, at `--step-hz` (default 100) steps a second, down the longest straight corridor of seed 1234. It writes 30 fps frames, `weave.csv` (every step's sideways distance) and `weave_plot.png` (the path from above, sideways stretched).
+- `captures/weave_before` is the old code (swing 0.36 m, then 0.89 m into the wall at the pipe). `captures/weave_after` is the fix (±0.012 m throughout).
+- `level_tests` "walking straight" holds forward for 6 s at 30, 60, 100, 144 and 240 Hz. It requires staying within 2.5 cm of the line, and distances at 2 s that agree to 8 cm. It fails on the old code at every rate.
+
 ## Rendering (round 4)
 
 The plan said "raster G-buffer + DXR shadows". It became a full inline ray tracer, which is

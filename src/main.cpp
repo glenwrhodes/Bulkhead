@@ -219,7 +219,132 @@ int runCheck(const Options& o) {
     return 0;
 }
 
+// --scene weave: the window's own movement code (Game::update) with the forward key held
+// and no mouse, down the longest straight corridor, stepped at the window's frame rate
+// (--step-hz, default 100). Every step's sideways distance from the corridor's centre
+// line goes into weave.csv and the log; frames are written at --fps; weave_plot.png is
+// the path seen from above, with the sideways axis stretched so centimetres show.
+int runWeave(const Options& o, const fs::path& dir) {
+    const uint64_t seed = o.seed.value_or(kDefaultSeed);
+    Kit kit;
+    loadKit(kit, o);
+    Game game(kit, mazeParams(o, seed));
+    game.setFlashlight(o.flashlight);
+    describe(game);
+    const OverheadMap map = gameMap(game);
+    Camera start = sceneCamera(game, "corridor");
+    start.pitch = -0.03f;
+    game.setCamera(start);
+    // the corridor: from the start cell straight on along the view
+    const Vec3 fwd = normalize(Vec3{start.forward().x, 0, start.forward().z});
+    const Vec3 right{-fwd.z, 0, fwd.x};
+    const Maze& m = game.maze();
+    Int2 c{int(std::floor(start.position.x / kCell + 0.5f)), int(std::floor(start.position.z / kCell + 0.5f))};
+    int dirIdx = 0;
+    for (int d = 0; d < 4; ++d)
+        if (dot(dirVector(Dir(d)), fwd) > 0.9f) dirIdx = d;
+    int cells = 1;
+    while (m.passable(c.x, c.y, Dir(dirIdx)) && m.kind(c.x + kDx[dirIdx], c.y + kDy[dirIdx]) == CellKind::Corridor) {
+        c = {c.x + kDx[dirIdx], c.y + kDy[dirIdx]};
+        ++cells;
+    }
+    const float runLength = float(cells) * kCell - 0.5f;
+    const float walkTime = std::min(8.0f, std::max(2.0f, (runLength - 2.5f) / 3.4f));
+    const float stepDt = 1.0f / float(o.stepHz);
+    const int frames = o.frames > 0 ? o.frames : int(std::ceil(walkTime * float(o.fps)));
+    log::info("Scene 'weave': straight corridor of {} cells ({:.1f} m) from ({:.1f}, {:.1f}); forward held, no mouse; "
+              "{} Hz steps, {} frames at {} fps",
+              cells, runLength, start.position.x, start.position.z, o.stepHz, frames, o.fps);
+
+    Gpu gpu(o.debugLayer);
+    Renderer renderer(gpu, nullptr, uint32_t(o.width), uint32_t(o.height));
+    uploadMap(renderer, map);
+    renderer.setKit(kit);
+    renderer.setLevel(game.level());
+
+    std::ofstream csv(dir / "weave.csv");
+    csv << "step,time,along_m,sideways_m,eye_height_m\n";
+    struct Sample {
+        float along, side;
+    };
+    std::vector<Sample> path;
+    InputState in;
+    in.forward = true;
+    float simTime = 0.0f;
+    int step = 0;
+    float maxSide = 0.0f, minSide = 0.0f;
+    std::vector<SceneInstance> instances;
+    std::vector<std::future<bool>> pending;
+    bool writeFailed = false;
+    for (int i = 0; i < frames; ++i) {
+        const float t = float(i) / float(o.fps);
+        while (simTime < t - 1e-6f) {
+            game.update(stepDt, in);
+            simTime += stepDt;
+            ++step;
+            const Vec3 rel = game.camera().position - start.position;
+            const float along = dot(rel, fwd), side = dot(rel, right);
+            path.push_back({along, side});
+            maxSide = std::max(maxSide, side);
+            minSide = std::min(minSide, side);
+            csv << std::format("{},{:.4f},{:.4f},{:.4f},{:.4f}\n", step, simTime, along, side, game.camera().position.y);
+            if (step % 10 == 0)
+                log::info("  step {:4}  t={:.2f}s  along {:6.2f} m  sideways {:+.3f} m", step, simTime, along, side);
+        }
+        game.buildInstances(instances);
+        FrameSettings s;
+        s.camera = game.camera();
+        s.rayTracing = o.rayTracing;
+        s.hud = o.hud;
+        s.exposure = o.exposure;
+        s.samples = std::max(2, o.spp);
+        s.time = t;
+        s.playerMapUV = mapUV(map, game.camera().position);
+        applyGame(s, game, o);
+        const fs::path file = dir / std::format("frame_{:04}.png", i + 1);
+        pending.push_back(std::async(std::launch::async,
+                                     [img = renderer.renderToImage(instances, s), file] { return img.writePng(file); }));
+        while (pending.size() > 8) {
+            writeFailed |= !pending.front().get();
+            pending.erase(pending.begin());
+        }
+    }
+    for (auto& f : pending) writeFailed |= !f.get();
+    log::info("Sideways from the centre line over {} steps: {:+.3f} .. {:+.3f} m (swing {:.3f} m)", step, minSide,
+              maxSide, maxSide - minSide);
+
+    // the plot: corridor seen from above, along = x (true scale), sideways stretched
+    const int W = 1800, H = 600, margin = 40;
+    Image plot(W, H, rgb(0x0b0f14));
+    const float along0 = -0.5f, along1 = std::max(runLength, path.empty() ? 1.0f : path.back().along + 0.5f);
+    const float sx = float(W - 2 * margin) / (along1 - along0);
+    const float sy = float(H - 2 * margin) / 2.6f;  // +-1.3 m across the image height
+    auto X = [&](float a) { return float(margin) + (a - along0) * sx; };
+    auto Y = [&](float s) { return float(H) * 0.5f - s * sy; };
+    for (float g : {-1.0f, -0.75f, -0.5f, -0.25f, 0.25f, 0.5f, 0.75f, 1.0f})  // 25 cm grid
+        plot.fillRect(margin, int(Y(g)), W - margin, int(Y(g)) + 1, std::abs(g) == 0.5f || std::abs(g) == 1.0f
+                                                                        ? rgb(0x2a3542)
+                                                                        : rgb(0x1a222c));
+    for (float a = 0.0f; a < along1; a += 4.0f)  // cell boundaries every 4 m
+        plot.fillRect(int(X(a)), margin, int(X(a)) + 1, H - margin, rgb(0x1a222c));
+    for (int x = margin; x < W - margin; x += 14) plot.fillRect(x, int(Y(0)), x + 7, int(Y(0)) + 2, rgb(0x6c7a88));
+    for (float w : {-1.2f, 1.2f}) plot.fillRect(margin, int(Y(w)) - 2, W - margin, int(Y(w)) + 2, rgb(0xc6d0db));
+    for (const Sample& p : path) plot.fillCircle(X(p.along), Y(p.side), 2.2f, rgb(0xff9a3c));
+    plot.fillCircle(X(0), Y(0), 6.0f, kStartColor);
+    plot.writePng(dir / "weave_plot.png");
+    log::info("Wrote weave_plot.png: along the corridor left to right at true scale ({:.0f} px/m); sideways "
+              "stretched to {:.0f} px/m; walls (white) at +-1.2 m, grid every 25 cm, centre line dashed",
+              sx, sy);
+    log::setFile({});
+    return writeFailed ? 1 : 0;
+}
+
 int runCapture(const Options& o) {
+    if (o.scene == "weave") {
+        clearFrames(o.output);
+        log::setFile(o.output / "capture.log");
+        return runWeave(o, o.output);
+    }
     const auto started = std::chrono::steady_clock::now();
     const fs::path dir = o.output;
     clearFrames(dir);

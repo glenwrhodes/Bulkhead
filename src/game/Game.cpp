@@ -90,6 +90,7 @@ Game::Game(const Kit& kit, const MazeParams& params)
 
 void Game::setCamera(const Camera& c) {
     camera_ = c;
+    sway_ = {};
     reveal();
     updateEffects();
 }
@@ -499,16 +500,21 @@ void Game::update(float dt, const InputState& in) {
 
     // crouch: held key; and once under something low you cannot stand up until clear of it
     // (walking into a pipe standing up just stops you)
-    Vec2 p{camera_.position.x, camera_.position.z};
+    // where the player actually stands: the camera minus the sideways sway drawn last
+    // step. (The sway is only a camera offset; feeding it back into the position made it
+    // add up every step: a ~0.35 m weave at 100 fps, worse at higher frame rates, and a
+    // steady slide into the wall while pressing against something.)
+    Vec2 p{camera_.position.x - sway_.x, camera_.position.z - sway_.y};
     const float head = level_.collision.headroom(p, kPlayerRadius);
     const bool forced = crouch_ > 0.3f && head > 0.0f && head < kStandHeight + 0.02f;
     const float crouchTarget = (in.crouch || forced) ? 1.0f : 0.0f;
-    crouch_ += (crouchTarget - crouch_) * std::min(1.0f, dt * 9.0f);
+    // (easing as 1 - e^(-rate dt): the same result at any frame rate)
+    crouch_ += (crouchTarget - crouch_) * (1.0f - std::exp(-9.0f * dt));
     const float height = kStandHeight + (kCrouchHeight - kStandHeight) * crouch_;
 
     float speed = (in.run && crouch_ < 0.5f ? 5.8f : 3.4f) * (1.0f - 0.5f * crouch_);
     Vec2 target = wl > 0 ? wish * (speed / wl) : Vec2{};
-    float k = std::min(1.0f, dt * 12.0f);
+    float k = 1.0f - std::exp(-12.0f * dt);
     velocity_ = velocity_ + (target - velocity_) * k;
 
     Vec2 np = level_.collision.move(p, velocity_ * dt, kPlayerRadius, doorOpen_, height);
@@ -517,11 +523,12 @@ void Game::update(float dt, const InputState& in) {
     float spd = length(velocity_);
     float stepLength = std::max(0.6f, spd / stepRate(spd));
     bob_ += moved / stepLength * kPi;
-    bobAmount_ += ((wl > 0 ? 1.0f : 0.0f) - bobAmount_) * std::min(1.0f, dt * 6.0f);
+    bobAmount_ += ((wl > 0 ? 1.0f : 0.0f) - bobAmount_) * (1.0f - std::exp(-6.0f * dt));
     float amp = (in.run ? 0.03f : 0.022f) * (1.0f - 0.5f * crouch_);
     Vec2 side = right * (0.012f * bobAmount_ * std::sin(bob_));
     const float eye = kEyeHeight + (kCrouchEye - kEyeHeight) * crouch_;
     camera_.position = {np.x + side.x, eye + amp * bobAmount_ * std::sin(2.0f * bob_), np.y + side.y};
+    sway_ = side;
     if (in.fire) fire();
     stepWorld(dt);
 }
@@ -575,6 +582,7 @@ void Game::spawnHunters(int count) {
 void Game::restart() {
     deathT_ = -1.0f;
     killer_ = -1;
+    sway_ = {};
     camera_ = Camera{};
     camera_.position = level_.spawn;
     camera_.yaw = level_.spawnYaw;
@@ -674,6 +682,7 @@ void Game::setWalkTime(float t) {
     const float eye = kEyeHeight + (kCrouchEye - kEyeHeight) * crouch_;
     camera_.position = {p.x + r.x * side, eye + 0.022f * walking * (1.0f - 0.5f * crouch_) * std::sin(2.0f * bob_),
                         p.y + r.z * side};
+    sway_ = {r.x * side, r.z * side};
     time_ = t;
     updateLighting();
     reveal();
@@ -1179,6 +1188,7 @@ void Game::setCrawlTime(float t) {
     c.yaw = std::atan2(-rel.x, -rel.z);
     c.pitch = std::clamp(std::atan2(rel.y, std::sqrt(rel.x * rel.x + rel.z * rel.z)), -0.4f, 1.42f);
     camera_ = c;
+    sway_ = {};
     time_ = t;
     updateLighting();
     reveal();
@@ -1239,6 +1249,7 @@ bool Game::setupHuntScene(bool fight) {
     scene_.pitch = -0.04f;
     scene_.length = fight ? 16.0f : 24.0f;
     camera_ = Camera{};
+    sway_ = {};
     camera_.position = scene_.start;
     camera_.yaw = scene_.yaw;
     camera_.pitch = scene_.pitch;

@@ -47,6 +47,9 @@ std::string usageText() {
         "  --scene walk|fire|crawl|hunt|fight  capture: the walk start -> exit (default), firing six shots,\n"
         "                    the creature crawling over you, a creature hunting you down, or killing one\n"
         "  --creatures N     window: creatures loose in the ship (default 3, 0..8)\n"
+        "  --scene weave     capture: the window's movement code, forward held, down a straight\n"
+        "                    corridor; logs the sideways drift (weave.csv, weave_plot.png)\n"
+        "  --step-hz N       weave: game steps per second (default 100, the window's typical rate)\n"
         "  --haze X          haze density multiplier (default 1, 0 = none)\n"
         "  --no-hud          hide crosshair and minimap\n"
         "  --assets DIR      kit folder (default: found next to the executable or in the source tree)\n"
@@ -90,7 +93,8 @@ std::optional<Options> parseCommandLine(int argc, char** argv, std::string& erro
         } else if (a == "--scene") {
             auto v = value();
             if (!v) return std::nullopt;
-            if (*v != "walk" && *v != "fire" && *v != "crawl" && *v != "hunt" && *v != "fight") return bad(*v);
+            if (*v != "walk" && *v != "fire" && *v != "crawl" && *v != "hunt" && *v != "fight" && *v != "weave")
+                return bad(*v);
             o.scene = std::string(*v);
         } else if (a == "--assets") {
             auto v = value();
@@ -112,6 +116,12 @@ std::optional<Options> parseCommandLine(int argc, char** argv, std::string& erro
             if (!parsePair(*v, o.width, o.height) || o.width < 16 || o.height < 16 || o.width > 8192 ||
                 o.height > 8192)
                 return bad(*v);
+        } else if (a == "--step-hz") {
+            auto v = value();
+            int n = 0;
+            if (!v) return std::nullopt;
+            if (!parseNumber(*v, n) || n < 10 || n > 1000) return bad(*v);
+            o.stepHz = n;
         } else if (a == "--creatures") {
             auto v = value();
             int n = 0;

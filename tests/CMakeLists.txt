@@ -63,6 +63,20 @@ bulkhead_png_test(crawl_smoke smoke
   GAME  --capture "${CAP}/crawl_smoke" --scene crawl --frames 24 --start 6 --res 640x360 --spp 2 --seed 42
   CHECK --dir "${CAP}/crawl_smoke" --count 24 --width 640 --height 360 --expect-motion)
 
+# Walking with the forward key held (the window's own update code at 100 steps a second)
+# down a straight corridor: the player must not weave. weave.csv logs every step's
+# sideways distance from the centre line; weave_plot.png is the path from above.
+bulkhead_png_test(weave_smoke smoke
+  GAME  --capture "${CAP}/weave_smoke" --scene weave --frames 60 --res 640x360 --spp 2 --seed 1234
+  CHECK --dir "${CAP}/weave_smoke" --count 60 --width 640 --height 360 --expect-motion)
+
+# The same at 1080p, 30 fps, for the video. Label "weave": run it on its own.
+# captures/weave_before was this capture on the code before the fix (the weave and the
+# slide into the wall); captures/weave_after is the fixed walk.
+bulkhead_png_test(weave_capture weave
+  GAME  --capture "${CAP}/weave_after" --scene weave --res 1920x1080 --fps 30 --spp 12 --seed 1234
+  CHECK --dir "${CAP}/weave_after" --at-least 120 --width 1920 --height 1080 --expect-motion)
+
 # Hunters: the hunt (it kills you) and the fight (you kill it), short and small.
 bulkhead_png_test(hunt_smoke smoke
   GAME  --capture "${CAP}/hunt_smoke" --scene hunt --res 480x270 --fps 15 --spp 2 --seed 1234

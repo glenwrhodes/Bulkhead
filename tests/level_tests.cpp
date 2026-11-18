@@ -605,6 +605,56 @@ void testHunters() {
     }
 }
 
+// The window's walk: forward held, no mouse, down a straight corridor, at several frame
+// rates. The camera may sway 1.2 cm either side of the line it walks, never more, and
+// the walk must not depend on the frame rate. (The sway once fed back into the position
+// each step: a 0.35 m weave at 100 fps, 0.84 m at 240, and a slide into the wall while
+// pressed against the low pipe at the end of this corridor.)
+void testWalkStraight() {
+    MazeParams p;
+    p.width = p.height = 40;
+    p.seed = 1234;
+    Camera start;
+    {
+        Game g(g_kit, p);
+        for (const Shot& s : g.findShots())
+            if (s.name == "corridor") start = s.camera;
+    }
+    start.pitch = -0.03f;
+    const Vec3 fwd = normalize(Vec3{start.forward().x, 0, start.forward().z});
+    const Vec3 right{-fwd.z, 0, fwd.x};
+    float along2[5] = {};
+    int k = 0;
+    for (int hz : {30, 60, 100, 144, 240}) {
+        Game g(g_kit, p);
+        g.setCamera(start);
+        InputState in;
+        in.forward = true;
+        const float dt = 1.0f / float(hz);
+        float maxSide = 0.0f, endAlong = 0.0f, freeMin = 0.0f, freeMax = 0.0f;
+        for (int i = 1; i <= hz * 6; ++i) {  // 6 s: ~15 m to the low pipe, then pressing on it
+            g.update(dt, in);
+            const Vec3 rel = g.camera().position - start.position;
+            const float side = dot(rel, right);
+            maxSide = std::max(maxSide, std::abs(side));
+            if (i <= hz * 4) {  // walking freely, before the pipe stops it
+                freeMin = std::min(freeMin, side);
+                freeMax = std::max(freeMax, side);
+            }
+            if (i == hz * 2) along2[k] = dot(rel, fwd);
+            endAlong = dot(rel, fwd);
+        }
+        std::printf("  %3d Hz: walking freely %+.3f .. %+.3f m off the line (swing %.3f); overall furthest %.3f m; "
+                    "%.2f m along at 2 s, %.2f m at 6 s\n",
+                    hz, freeMin, freeMax, freeMax - freeMin, maxSide, along2[k], endAlong);
+        CHECK_MSG(maxSide < 0.025f, std::format("{} Hz: the walk weaves {:.3f} m off its line", hz, maxSide));
+        ++k;
+    }
+    for (int i = 1; i < 5; ++i)
+        CHECK_MSG(std::abs(along2[i] - along2[0]) < 0.08f,
+                  std::format("distance walked in 2 s depends on frame rate ({:.2f} vs {:.2f} m)", along2[i], along2[0]));
+}
+
 void testCollision() {
     Collision c;
     c.add({0, 0, 1, 1});
@@ -638,7 +688,8 @@ int main(int argc, char** argv) {
                           {"sections, lights, map, flashlight (40x40)", testMood},
                           {"derelict pieces, crouching, effects, firing (40x40)", testDerelictAndGun},
                           {"creature: parts, crawl surface, gait, IK", testCreature},
-                          {"hunters: roaming, the hunt, the fight, four hits", testHunters}};
+                          {"hunters: roaming, the hunt, the fight, four hits", testHunters},
+                          {"walking straight: no weave at any frame rate", testWalkStraight}};
     for (const Test& t : tests) {
         const int before = g_failures;
         std::printf("[ RUN  ] %s\n", t.name);

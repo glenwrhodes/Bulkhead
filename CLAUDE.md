@@ -73,6 +73,10 @@ milestone status are in `docs/PLAN.md`; update that table when a milestone lands
   captures have none. They re-route only at cell centres; never let a path change move
   the creature (level_tests checks a 0.4 m-per-step limit).
 - capture_check rejects flat frames, so a scene must not end on a solid black fade.
+- Window movement (`Game::update`) is not what the scripted films run. Check it with
+  `--scene weave` (the window's own update at `--step-hz`) and the "walking straight" unit
+  test at several frame rates. Camera-only offsets (sway, bob) must never feed back into
+  the position, and per-step easing must use `1 - exp(-rate*dt)`, not `min(1, rate*dt)`.
 - Never mirror a basis in `Mat4::basis` (X × Y must equal Z). A mirrored instance flips
   the winding, and back-face culling hides it. If a run is
   stopped, its `Bulkhead.exe` can keep running and lock the exe for the next build:

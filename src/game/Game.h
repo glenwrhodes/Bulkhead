@@ -214,6 +214,7 @@ private:
     WalkPath walk_;
     Camera camera_;
     Vec2 velocity_;
+    Vec2 sway_;  // sideways camera sway (x, z) drawn last step: a view offset only, never part of the position
     float bob_ = 0.0f;
     float bobAmount_ = 0.0f;
     float crouch_ = 0.0f;
