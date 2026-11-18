@@ -23,7 +23,7 @@ Custom C++20 engine on DirectX 12 with DXR ray tracing (RTX 4090 Laptop GPU, ray
 | 11 | Round 10: game loop with several creatures; full film pass | **Done (rounds 9-10)** |
 | 12 | Part 3, round 11: measure how long it takes to meet a creature; more of them, drifting toward the player and hearing footsteps; frame rate with them loose | **Done (round 11)**: see Finding the creatures |
 | 13 | Round 12: viewports into space on the ship's edge (Blender piece built in steps, stars, glass that reflects), the window film | **Done (round 12)**: see Viewports |
-| 14 | Round 13: sound (mixer, window output, WAV beside every capture, ~25 sounds, credits) | Planned |
+| 14 | Round 13: sound (mixer, window output, WAV beside every capture, ~25 sounds, credits) | **Done (round 13)**: see Sound |
 | 15 | Round 14: the approach (crawl in on walls and ceiling, stop, hiss, crouch, leap from any surface) | Planned |
 | 16 | Round 15: lights without a cap: sample a few lights per pixel by importance instead of shadow-testing all of them (see Viewports, "How many lights") | Proposed |
 | 17 | Round 16: the climbing film (floor, wall, ceiling, wall, floor, close up) | Planned |
@@ -392,6 +392,77 @@ step for the video.
 Timing after this round (`bench_walk`, whole walk, 1080p): median 7.6 ms, 95th percentile
 10.2 ms (7.2 / 9.7 ms last round; the same section varies by 0.5-1 ms run to run on this
 laptop).
+
+## Sound (round 13)
+
+**The sounds** (`assets/sounds`, 23 MP3s, about 1 MB). Each was generated with ElevenLabs Sound
+Effects (v3) through GlenTools from a prompt written for it. `assets/sounds/CREDITS.md` lists
+every file with what it's for, its prompt, its length, its request id and the licence note
+(paid ElevenLabs plans allow commercial use; the account's plan was not checked from here).
+Swapping one means dropping in a file with the same name.
+
+**The mixer** (`src/audio/Mixer.*`, no Windows; the same for the window and the captures):
+- **Clips:** `SoundBank` decodes the MP3s (dr_mp3) or WAVs (dr_wav) to 44.1 kHz float.
+- **Voices:** one-shots (`SoundEvent`), and loops keyed by the game (`SoundLoop`). A new key
+  fades in over 0.25 s, a missing one fades out. At most 64 voices; the oldest one-shot goes.
+- **Placing a sound round the listener:**
+  - **Distance:** 1 / (1 + (d - 1 m) / 3 m), so half at 4 m, a quarter at 10 m, a seventh at
+    20 m, gone past 50 m. That's gentler than real life, so a hiss down the corridor is heard.
+  - **Left/right:** equal-power panning (80% wide).
+  - **Muffling:** a one-pole low-pass from 18 kHz down toward 6.5 kHz behind you, and 900 Hz
+    behind walls (with the level down 45%). The game finds the walls with `raycastLevel`.
+- **Room and output:**
+  - A small metallic room: a Schroeder reverb (Freeverb's 4 comb + 2 all-pass lengths per
+    side). Far sounds send more to it.
+  - Master level 0.85 and a soft knee above 0.9. The peak before it and the number of samples
+    it bent are logged.
+
+**What the game makes sound** (`Game::collectSounds`, called once a frame after the step, so
+it works the same in the window and every scripted film):
+- **Pushed as they happen:**
+  - The gun.
+  - A bolt's hit: metal, or the creature, plus its pain cry if it lives.
+- **Found by comparing with the last frame:**
+  - **Footsteps:** one per head bob (window and walk), or one per 0.8 m in scenes that place
+    the camera themselves.
+  - **Claws:** each creature foot going from lifted to planted (`Creature::planted`), so the
+    clicks follow the gait.
+  - **Hunter state changes:** stalking starts (hiss), leap (screech), dying (death cry).
+  - **The scripted crawl creature:** its jaws opening wide (`Creature::jaw()`, hiss).
+  - **Doors** starting to open or close (sliding, or heavy for bulkhead and airlock).
+  - **Spark bursts** within 16 m (the same slots the effects use).
+  - **Being caught:** the slam.
+  - **Now and then off in the ship:** a groan or a knock, every 23 s slot with a chance of
+    70%, placed 10 m away and muffled.
+- **Loops:** the ship's hum, each venting steam jet, a creature charging (skitter), and being
+  fed on.
+
+**The window** (`src/audio/AudioDevice.*`, XAudio2, delay-loaded):
+- Three 1024-frame buffers stay queued (~70 ms in total). XAudio2's thread mixes the next one
+  under the lock the game holds while it hands over the frame's sounds.
+- With no device, or no `xaudio2_9.dll`, it logs why and stays silent.
+- `--sound-check` (ctest `sound_device`, label `diag`) opens the device and plays two sounds.
+  Here it played 1.28 s.
+
+**Captures** (`src/game/AudioRecorder.*`): every `--capture` except the weave writes, beside its
+frames:
+- `audio.wav` (44.1 kHz 16-bit stereo; each frame gets exactly 44100 / fps samples, 1470 at
+  30 fps, so it is as long as the frames to the sample)
+- `audio_events.csv` (every one-shot with frame, time, position, distance, gain and occlusion,
+  plus loops starting and stopping)
+- `audio_wave.png` (left above right, a marker lane coloured by group: cyan player, yellow
+  gun, orange creature, green world, blue ambience; a line every second; the limiter's knee in red)
+
+**Checked:**
+- `audio_tests` (unit): all 23 decode and none is silent. A sound starts on the first sample
+  of the frame after `play()`. A source 3 m to the right is 6.5× louder on the right. 10 m is
+  1/3.0 of 2 m. A wall takes it to 37%. A dropped loop is gone half a second later.
+- The hunt and fight scenes make their sounds: claws, hiss, gunfire and hits; a screech
+  before the slam and feeding in the hunt; one death cry in the fight.
+- Re-rendered with sound: `film_fight` (11.57 s, peak 0.86, nothing limited) and `film_window`
+  (17.50 s = 525 frames × 1470 samples, peak 0.49: the door, four footsteps, claws closing in from 6.5 to 3.5 m, the hiss at 2.8 m at
+  14.5 s).
+- The sound itself has not been listened to by anyone on the AI side.
 
 ## The walking weave (fixed after round 10)
 

@@ -93,6 +93,12 @@ milestone status are in `docs/PLAN.md`; update that table when a milestone lands
 - Each light in range is a shadow ray on every pixel it reaches (~0.3 ms a light at 1080p,
   `ctest -L diag -R light_cost`). Lighting is not free per light, hence the caps until lights
   are sampled instead (PLAN.md, "How many lights").
+- Sound: anything new that should be heard goes through `Game::collectSounds` (push a
+  one-shot with `Game::sound`, or detect it there against last frame, or add a keyed loop).
+  The mixer is shared by the window and the captures, so a capture's `audio.wav` is the test.
+  Look at `audio_events.csv` and `audio_wave.png`; nobody here can listen. New sound files
+  go in `assets/sounds`, in `Snd`/`kSounds` (`src/audio`), and in `CREDITS.md` with their
+  source and licence.
 - Window movement (`Game::update`) is not what the scripted films run. Check it with
   `--scene weave` (the window's own update at `--step-hz`) and the "walking straight" unit
   test at several frame rates. Camera-only offsets (sway, bob) must never feed back into
@@ -112,4 +118,6 @@ milestone status are in `docs/PLAN.md`; update that table when a milestone lands
 - Grid: 4 m cells, x east, y south (row). The maze stores east and south edges for each cell.
 - Shaders: add an entry with `bulkhead_compile_shader()` in `CMakeLists.txt`. It produces
   `g_<Name>.h`, which is included directly.
-- Third-party code comes in through FetchContent, pinned to a commit (stb at present; cgltf comes next).
+- Third-party code comes in through FetchContent, pinned to a commit or tag (stb, cgltf,
+  dr_libs), with its licence in `package/THIRD_PARTY_NOTICES.txt`.
+- Bash also runs `curl` (downloading sound files, querying GitHub for a commit to pin).

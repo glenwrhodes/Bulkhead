@@ -9,7 +9,10 @@
 #include <string>
 #include <vector>
 
+#include <array>
+
 #include "assets/Kit.h"
+#include "audio/Sounds.h"
 #include "core/Math.h"
 #include "game/Creature.h"
 #include "game/Effects.h"
@@ -131,6 +134,15 @@ public:
     // Where round the corridor the scene's creature is at distance s (0 floor, ... ceiling).
     float crawlU(float s) const;
     float crawlS(float t) const;  // distance along its path at scene time t
+
+    // ---- sound (part 3) ----
+    // Call once a frame, after the game has stepped (window, captures alike): the one-shots
+    // since the last call (footsteps, the gun and its hits, claws landing, hisses, screeches,
+    // doors, sparks, distant groans), each with how hidden it is behind walls, and the loops
+    // sounding now (the ship's hum, steam jets, skittering, feeding). The first call only
+    // takes stock and returns no one-shots.
+    void collectSounds(std::vector<SoundEvent>& events, std::vector<SoundLoop>& loops);
+    Listener listener() const;
 
     // ---- viewports (part 3) ----
     // The window scene (capture --scene window, ~17 s): walk up a corridor to a viewport on
@@ -291,6 +303,26 @@ private:
         float duration = 0.0f;
     } crawl_;
     CreaturePose crawlPose(float t) const;
+    // sound: what is pushed as it happens (the gun, hits), and what collectSounds compares
+    // with the last frame to find the rest
+    std::vector<SoundEvent> pendingSounds_;
+    void sound(Snd s, Vec3 pos, float gain = 1.0f, float pitch = 1.0f, bool positional = true);
+    float occlusionTo(Vec3 p) const;
+    struct CreatureEars {
+        std::array<bool, 4> planted{};
+        float jaw = 0.0f, hissAgain = 0.0f;
+        HunterState state = HunterState::Roam;
+        int claw = 0;
+    };
+    bool soundStarted_ = false;
+    float soundTime_ = 0.0f, lastBob_ = 0.0f, stepAcc_ = 0.0f;
+    Vec3 lastCam_;
+    int steps_ = 0;
+    std::vector<float> lastDoor_;
+    std::vector<CreatureEars> hunterEars_;
+    CreatureEars crawlEars_;
+    bool wasDead_ = false;
+    void listenToCreature(const Creature& c, CreatureEars& ears, bool scripted, float dt);
     struct WindowScene {
         Int2 cell;
         Vec3 C, A, O;          // cell centre (floor), along the corridor (the creature's way), out

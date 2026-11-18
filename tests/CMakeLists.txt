@@ -15,6 +15,17 @@ target_link_libraries(level_tests PRIVATE bulkhead_lib)
 bulkhead_settings(level_tests)
 set_target_properties(level_tests PROPERTIES FOLDER tests)
 
+add_executable(audio_tests audio_tests.cpp)
+target_link_libraries(audio_tests PRIVATE bulkhead_lib)
+bulkhead_settings(audio_tests)
+set_target_properties(audio_tests PROPERTIES FOLDER tests)
+add_test(NAME audio_tests COMMAND audio_tests "${CMAKE_SOURCE_DIR}/assets")
+set_tests_properties(audio_tests PROPERTIES LABELS unit)
+
+# The window's sound output (XAudio2) without the window. Label "diag" (needs a sound device).
+add_test(NAME sound_device COMMAND Bulkhead --sound-check)
+set_tests_properties(sound_device PROPERTIES LABELS diag)
+
 add_executable(capture_check capture_check.cpp)
 target_link_libraries(capture_check PRIVATE bulkhead_lib)
 bulkhead_settings(capture_check)

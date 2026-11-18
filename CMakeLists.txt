@@ -40,6 +40,15 @@ add_library(bh_cgltf STATIC third_party/cgltf_impl.cpp)
 target_include_directories(bh_cgltf SYSTEM PUBLIC ${cgltf_SOURCE_DIR})
 set_target_properties(bh_cgltf PROPERTIES FOLDER third_party)
 
+# dr_libs (dr_mp3, dr_wav: decoding the sound effects), pinned to a commit.
+FetchContent_Declare(dr_libs
+  URL https://github.com/mackron/dr_libs/archive/0901cdc54e719e2175827cb60b78fe725e581fe2.tar.gz
+)
+FetchContent_MakeAvailable(dr_libs)
+add_library(bh_drlibs STATIC third_party/dr_impl.cpp)
+target_include_directories(bh_drlibs SYSTEM PUBLIC ${dr_libs_SOURCE_DIR})
+set_target_properties(bh_drlibs PROPERTIES FOLDER third_party)
+
 # ---------------------------------------------------------------------------
 # Shader compiler: dxc.exe from the Windows SDK (not on PATH on this machine).
 # ---------------------------------------------------------------------------
@@ -75,9 +84,12 @@ add_library(bulkhead_lib STATIC
   src/game/Creature.cpp    src/game/Creature.h
   src/game/Hunter.cpp      src/game/Hunter.h
   src/game/Encounters.cpp  src/game/Encounters.h
+  src/game/AudioRecorder.cpp src/game/AudioRecorder.h
+  src/audio/Sounds.h
+  src/audio/Mixer.cpp      src/audio/Mixer.h
   src/game/Effects.h)
 target_include_directories(bulkhead_lib PUBLIC src)
-target_link_libraries(bulkhead_lib PUBLIC bh_stb bh_cgltf)
+target_link_libraries(bulkhead_lib PUBLIC bh_stb bh_cgltf bh_drlibs)
 target_compile_definitions(bulkhead_lib PRIVATE BULKHEAD_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 bulkhead_settings(bulkhead_lib)
 
@@ -92,14 +104,16 @@ add_executable(Bulkhead
   src/core/Window.cpp      src/core/Window.h
   src/render/Gpu.cpp       src/render/Gpu.h
   src/render/Renderer.cpp  src/render/Renderer.h
+  src/audio/AudioDevice.cpp src/audio/AudioDevice.h
   shaders/trace.hlsl shaders/present.hlsl
   ${TRACE_CS} ${PRESENT_VS} ${PRESENT_PS})
 set_source_files_properties(shaders/trace.hlsl shaders/present.hlsl PROPERTIES HEADER_FILE_ONLY TRUE)
 target_include_directories(Bulkhead PRIVATE ${BULKHEAD_SHADER_GEN_DIR})
-target_link_libraries(Bulkhead PRIVATE bulkhead_lib d3d12 dxgi dxguid delayimp)
-# D3D12 and DXGI load on first use, so the CPU-only modes (--check, --overhead, --help)
-# start even on a machine without them (GitHub's build machines check the download so).
-target_link_options(Bulkhead PRIVATE /DELAYLOAD:d3d12.dll /DELAYLOAD:dxgi.dll)
+target_link_libraries(Bulkhead PRIVATE bulkhead_lib d3d12 dxgi dxguid xaudio2 delayimp)
+# D3D12, DXGI and XAudio2 load on first use, so the CPU-only modes (--check, --overhead,
+# --help) start even on a machine without them (GitHub's build machines check the download
+# so). The window checks that xaudio2_9.dll loads before starting sound.
+target_link_options(Bulkhead PRIVATE /DELAYLOAD:d3d12.dll /DELAYLOAD:dxgi.dll /DELAYLOAD:xaudio2_9.dll)
 bulkhead_settings(Bulkhead)
 set_property(DIRECTORY ${CMAKE_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT Bulkhead)
 
@@ -109,7 +123,8 @@ set_property(DIRECTORY ${CMAKE_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT Bulkhead)
 # unpacks the zip into an empty folder and runs it from there.
 # ---------------------------------------------------------------------------
 install(TARGETS Bulkhead RUNTIME DESTINATION .)
-install(DIRECTORY assets/ DESTINATION assets FILES_MATCHING PATTERN "*.glb" PATTERN "kit_manifest.json")
+install(DIRECTORY assets/ DESTINATION assets FILES_MATCHING PATTERN "*.glb" PATTERN "kit_manifest.json"
+        PATTERN "*.mp3" PATTERN "*.wav" PATTERN "CREDITS.md")
 install(FILES package/PLAY.txt package/THIRD_PARTY_NOTICES.txt DESTINATION .)
 
 # ---------------------------------------------------------------------------

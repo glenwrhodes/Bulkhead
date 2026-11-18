@@ -189,6 +189,7 @@ bool Game::fire() {
     Vec3 to = target - o;
     const float dist = std::max(0.05f, length(to));
     bolts_.push_back({o, to * (1.0f / dist), time_, dist, n, target_hunter});
+    sound(Snd::GunFire, o, 0.8f, 0.96f + 0.08f * unit(mix32(uint32_t(shotsFired_) * 7919u)), false);
     camera_.pitch = std::min(1.35f, camera_.pitch + 0.012f);  // the kick nudges the aim up
     updateEffects();
     return true;
@@ -213,7 +214,10 @@ void Game::updateEffects() {
                 const bool wasAlive = h.alive();
                 h.hit(huntWorld(true));
                 if (wasAlive && !h.alive()) ++kills_;
+                sound(Snd::HitCreature, at, 1.0f);
+                if (h.alive()) sound(Snd::CreaturePain, h.headPosition(), 1.0f, 0.95f + 0.1f * unit(mix32(uint32_t(i) + 3u)));
             } else {
+                sound(Snd::HitMetal, at, 0.75f, 0.9f + 0.2f * unit(mix32(uint32_t(arrive * 997.0f))));
                 if (int(scorches_.size()) >= kMaxScorches) scorches_.erase(scorches_.begin());
                 const uint32_t h = mix32(uint32_t(arrive * 1000.0f) + 17u);
                 scorches_.push_back(
@@ -1362,6 +1366,185 @@ void Game::stepHuntScene(float t, float dt) {
     stepWorld(dt);
     // ends most of the way into the fade to black (an all-black frame says nothing)
     if (playerDead() && scene_.endAt < 0.0f) scene_.endAt = t + 3.0f;
+}
+
+// ---------------------------------------------------------------------------
+// Sound (part 3): what the game hands the mixer each frame
+// ---------------------------------------------------------------------------
+
+void Game::sound(Snd s, Vec3 pos, float gain, float pitch, bool positional) {
+    SoundEvent e;
+    e.sound = s;
+    e.time = time_;
+    e.pos = pos;
+    e.positional = positional;
+    e.gain = gain;
+    e.pitch = pitch;
+    pendingSounds_.push_back(e);
+}
+
+Listener Game::listener() const {
+    Listener l;
+    l.pos = camera_.position;
+    l.right = camera_.right();
+    l.forward = camera_.forward();
+    return l;
+}
+
+// 0 in plain view .. 1 behind a wall (or too far to tell: 45 m and beyond)
+float Game::occlusionTo(Vec3 p) const {
+    Vec3 d = p - camera_.position;
+    const float dist = length(d);
+    if (dist < 0.6f) return 0.0f;
+    if (dist > 45.0f) return 1.0f;
+    d = d * (1.0f / dist);
+    Vec3 n;
+    const float t = raycastLevel(maze_, level_, camera_.position, d, dist, doorOpen_, n);
+    return t >= dist - 0.5f ? 0.0f : 1.0f;
+}
+
+// Claws landing (a foot going from lifted to planted), and for the scripted crawl creature
+// a hiss whenever its jaws open wide.
+void Game::listenToCreature(const Creature& c, CreatureEars& ears, bool scripted, float dt) {
+    ears.hissAgain = std::max(0.0f, ears.hissAgain - dt);
+    const bool near = length(c.bodyCenter() - camera_.position) < 32.0f;
+    for (int leg = 0; leg < 4; ++leg) {
+        const bool p = c.planted(leg);
+        if (p && !ears.planted[size_t(leg)] && near) {
+            const uint32_t h = mix32(uint32_t(time_ * 1000.0f) * 31u + uint32_t(leg) + uint32_t(ears.claw) * 7u);
+            sound(ears.claw++ % 2 ? Snd::Claw2 : Snd::Claw1, c.foot(leg), 0.4f, 0.85f + 0.3f * unit(h));
+        }
+        ears.planted[size_t(leg)] = p;
+    }
+    if (scripted) {
+        if (c.jaw() > 0.45f && ears.jaw <= 0.45f && ears.hissAgain <= 0.0f) {
+            sound(Snd::CreatureHiss, c.headPosition(), 1.0f);
+            ears.hissAgain = 2.5f;
+        }
+    }
+    ears.jaw = c.jaw();
+}
+
+void Game::collectSounds(std::vector<SoundEvent>& events, std::vector<SoundLoop>& loops) {
+    events.clear();
+    loops.clear();
+    const float dt = std::max(0.0f, time_ - soundTime_);
+    if (!soundStarted_) {
+        // first call: take stock, no one-shots (a capture starting late mustn't open with a crash)
+        soundStarted_ = true;
+        lastCam_ = camera_.position;
+        lastBob_ = bob_;
+        lastDoor_ = doorOpen_;
+        hunterEars_.assign(hunters_.size(), {});
+        for (size_t i = 0; i < hunters_.size(); ++i) hunterEars_[i].state = hunters_[i].state();
+        pendingSounds_.clear();
+    }
+
+    // footsteps: one per head bob when the bob moved (the window, the scripted walk), else one
+    // every 0.8 m the camera travels (scenes that place the camera themselves)
+    const Vec3 move{camera_.position.x - lastCam_.x, 0.0f, camera_.position.z - lastCam_.z};
+    const float travelled = length(move);
+    if (!playerDead() && travelled < 3.0f && travelled > 0.0f) {
+        int n = 0;
+        if (bob_ != lastBob_) {
+            n = int(std::floor(bob_ / kPi)) - int(std::floor(lastBob_ / kPi));
+            n = std::clamp(n, 0, 3);
+        } else {
+            stepAcc_ += travelled;
+            while (stepAcc_ >= 0.8f) stepAcc_ -= 0.8f, ++n;
+        }
+        for (int k = 0; k < n; ++k) {
+            const uint32_t h = mix32(uint32_t(++steps_) * 2654435761u);
+            const Snd s = steps_ % 3 == 0 ? Snd::Footstep1 : steps_ % 3 == 1 ? Snd::Footstep2 : Snd::Footstep3;
+            sound(s, camera_.position - Vec3{0, 1.5f, 0}, 0.5f * (1.0f - 0.5f * crouch_), 0.92f + 0.16f * unit(h), false);
+        }
+    }
+    lastCam_ = camera_.position;
+    lastBob_ = bob_;
+
+    // hunters: claws, and what each state change sounds like
+    if (hunterEars_.size() != hunters_.size()) {
+        hunterEars_.assign(hunters_.size(), {});
+        for (size_t i = 0; i < hunters_.size(); ++i) hunterEars_[i].state = hunters_[i].state();
+    }
+    for (size_t i = 0; i < hunters_.size(); ++i) {
+        const Hunter& h = hunters_[i];
+        CreatureEars& ears = hunterEars_[i];
+        const HunterState s = h.state();
+        if (s != ears.state) {
+            if (s == HunterState::Stalk) sound(Snd::CreatureHiss, h.headPosition(), 1.0f);
+            if (s == HunterState::Leap) sound(Snd::CreatureScreech, h.headPosition(), 1.1f);
+            if (s == HunterState::Dying) sound(Snd::CreatureDeath, h.headPosition(), 1.0f);
+            ears.state = s;
+        }
+        if (h.alive() && s != HunterState::Feed) listenToCreature(h.creature(), ears, false, dt);
+        if (s == HunterState::Chase)
+            loops.push_back({Snd::CreatureSkitter, 100u + uint32_t(i), h.bodyCenter(), true, 0.6f, 1.0f, 0.0f});
+    }
+    if (creatureActive()) listenToCreature(creature_, crawlEars_, true, dt);
+
+    // being caught: the slam, then feeding until the fade
+    if (playerDead() && !wasDead_) sound(Snd::PlayerThud, camera_.position, 1.0f, 1.0f, false);
+    wasDead_ = playerDead();
+    if (playerDead() && deathT_ > 0.15f)
+        loops.push_back({Snd::Feeding, 200u, camera_.position, false, 0.9f * (1.0f - blackout()), 1.0f, 0.0f});
+
+    // doors: when one starts to open or to close
+    if (lastDoor_.size() != doorOpen_.size()) lastDoor_ = doorOpen_;
+    for (size_t i = 0; i < doorOpen_.size(); ++i) {
+        const float was = lastDoor_[i], now = doorOpen_[i];
+        const Door& d = level_.doors[i];
+        if (length(d.center - camera_.position) < 35.0f) {
+            const Snd s = d.kind == DoorKind::Sliding ? Snd::DoorSliding : Snd::DoorHeavy;
+            const Vec3 p = d.center + Vec3{0, 1.2f, 0};
+            if (was <= 0.001f && now > 0.001f) sound(s, p, 0.8f);
+            else if (was >= 0.999f && now < 0.999f) sound(s, p, 0.6f, 0.9f);
+        }
+        lastDoor_[i] = now;
+    }
+
+    // sparks: bursts that started since the last call; steam: loops while they blow
+    for (int idx : nearEmitters_) {
+        const Emitter& e = level_.emitters[size_t(idx)];
+        if (e.kind == Emitter::Spark) {
+            // (within 16 m: a derelict corridor has dozens of live wires in earshot)
+            if (length(e.position - camera_.position) > 16.0f) continue;
+            const uint32_t m0 = slotOf(time_ + e.phase * kSparkSlot, kSparkSlot);
+            for (uint32_t m = m0 >= 3 ? m0 - 3 : 0; m <= m0; ++m) {
+                float t0;
+                uint32_t seed;
+                if (sparkBurst(uint32_t(idx), m, e.phase, t0, seed) && t0 > soundTime_ && t0 <= time_ && dt < 1.0f)
+                    sound(Snd::Sparks, e.position, 0.45f, 0.9f + 0.25f * unit(seed));
+            }
+        } else {
+            const float s = steamStrength(uint32_t(idx), time_, e.phase);
+            if (s > 0.05f) loops.push_back({Snd::Steam, 1000u + uint32_t(idx), e.position, true, 0.55f * s, 1.0f, 0.0f});
+        }
+    }
+
+    // the ship: its hum, and now and then something groaning or knocking far off
+    loops.push_back({Snd::ShipHum, 1u, camera_.position, false, 0.32f, 1.0f, 0.0f});
+    const float slotLen = 23.0f;
+    const int64_t slotNow = int64_t(std::floor(time_ / slotLen)), slotWas = int64_t(std::floor(soundTime_ / slotLen));
+    if (slotNow != slotWas && slotNow > 0 && dt < 1.0f) {
+        const uint32_t h = hash2(uint32_t(slotNow), maze_.params().seed ? uint32_t(maze_.params().seed) : 1u);
+        if (unit(h) < 0.7f) {
+            const float a = unit(mix32(h)) * 2.0f * kPi;
+            // (placed 10 m off: the walls in between muffle it, the room carries it)
+            const Vec3 p = camera_.position + Vec3{std::cos(a), 0.1f, std::sin(a)} * 10.0f;
+            sound(unit(mix32(h + 9u)) < 0.6f ? Snd::HullGroan : Snd::DistantKnock, p, 1.6f, 0.9f + 0.2f * unit(h >> 3));
+        }
+    }
+
+    // how hidden each one is
+    for (SoundEvent& e : pendingSounds_) {
+        if (e.positional) e.occlusion = occlusionTo(e.pos);
+        events.push_back(e);
+    }
+    pendingSounds_.clear();
+    for (SoundLoop& l : loops)
+        if (l.positional) l.occlusion = occlusionTo(l.pos);
+    soundTime_ = time_;
 }
 
 // ---------------------------------------------------------------------------

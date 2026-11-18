@@ -46,6 +46,9 @@ the table under [Play](#play) and in `PLAY.txt` in the zip.
   have seen.
 - Corridors along the ship's edge have viewports out into space: stars, and glass that
   reflects the corridor (and whatever is crawling behind you).
+- Sound: footsteps on the grating, the pistol and its hits, claws clicking as each foot
+  lands, hissing, screeching, doors, sparks, steam and the ship's hum. It's placed round you,
+  and muffled behind walls (`assets/sounds/CREDITS.md` says where each came from).
 - The exit airlock ends the run.
 
 ## Build
@@ -116,6 +119,7 @@ Captures go to `captures/` (git-ignored):
 | `captures/fire/` | Standing in a dark corridor and firing six shots (1080p, 6 s) |
 | `captures/crawl/` | The creature: along the floor, up the wall, across the ceiling overhead (1080p, 15 s, seed 42) |
 | `captures/hunt/` | A creature hunts the player down: stalks, charges, leaps; the player dies (1080p, ~10 s) |
+| `<capture>/audio.wav` | The sound of every capture, frame for frame, with `audio_events.csv` (what played when) and `audio_wave.png` |
 | `captures/window/` | A viewport on the ship's edge: stars outside, the corridor and the creature reflected in the glass, the flashlight across it, then the creature on the wall (1080p, 17.5 s) |
 | `video/blender/window/` | The viewport modelled in Blender step by step (`step_01..08.png`), Cycles finals, a Blender window screenshot |
 | `captures/fight/` | The player kills one: four hits as it charges; it dies on its back (1080p, ~11 s) |

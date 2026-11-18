@@ -16,6 +16,7 @@
 #include <fstream>
 #include <future>
 #include <memory>
+#include <mutex>
 #include <string>
 
 #include "assets/Kit.h"
@@ -23,6 +24,9 @@
 #include "core/Image.h"
 #include "core/Log.h"
 #include "core/Window.h"
+#include "audio/AudioDevice.h"
+#include "audio/Mixer.h"
+#include "game/AudioRecorder.h"
 #include "game/Encounters.h"
 #include "game/Game.h"
 #include "render/Gpu.h"
@@ -132,6 +136,14 @@ Vec2 mapUV(const OverheadMap& map, Vec3 p) {
     return {px / float(map.image.width()), py / float(map.image.height())};
 }
 
+// The sound effects in <assets>/sounds. Returns how many loaded (the rest stay silent).
+int loadSounds(SoundBank& bank, const Options& o, bool verbose) {
+    std::string report;
+    const int n = bank.load(findAssetsDirectory(o.assets) / "sounds", report);
+    if (verbose) log::info("Sounds: {} of {} loaded\n{}", n, kSoundCount, report);
+    return n;
+}
+
 void loadKit(Kit& kit, const Options& o) {
     fs::path dir = findAssetsDirectory(o.assets);
     std::string error;
@@ -223,8 +235,52 @@ int runCheck(const Options& o) {
         log::error("The ship needs models the kit does not have");
         return 1;
     }
+    SoundBank bank;
+    const int sounds = loadSounds(bank, o, false);
+    if (sounds < kSoundCount) log::error("Only {} of {} sounds loaded", sounds, kSoundCount);
+    log::info("Sounds: {} of {} loaded", sounds, kSoundCount);
     log::info("Check OK: assets {}", fs::absolute(findAssetsDirectory(o.assets)).string());
-    return 0;
+    return sounds == kSoundCount ? 0 : 1;
+}
+
+// --sound-check: the window's sound path (XAudio2) without the window: open the device,
+// play the scanner ping and a footstep, close. Exit 0 if it played, 2 if there is no device.
+int runSoundCheck(const Options& o) {
+    SoundBank bank;
+    const int n = loadSounds(bank, o, false);
+    Mixer mixer(bank);
+    std::mutex lock;
+    AudioDevice dev;
+    std::string err;
+    if (!dev.open(mixer, lock, err)) {
+        log::warn("Sound check: {} ({} sounds loaded)", err, n);
+        return 2;
+    }
+    {
+        std::lock_guard<std::mutex> g(lock);
+        SoundEvent e;
+        e.sound = Snd::ScannerPing;
+        e.positional = false;
+        mixer.play(e);
+    }
+    Sleep(500);
+    {
+        std::lock_guard<std::mutex> g(lock);
+        SoundEvent e;
+        e.sound = Snd::Footstep1;
+        e.positional = false;
+        mixer.play(e);
+    }
+    Sleep(700);
+    uint64_t frames = 0;
+    {
+        std::lock_guard<std::mutex> g(lock);
+        frames = mixer.framesRendered();
+    }
+    dev.close();
+    log::info("Sound check: XAudio2 played {} frames ({:.2f} s) of {} loaded sounds, peak {:.2f}", frames,
+              double(frames) / Mixer::kRate, n, mixer.peak());
+    return frames > 0 ? 0 : 1;
 }
 
 // --scene weave: the window's own movement code (Game::update) with the forward key held
@@ -442,6 +498,14 @@ int runCapture(const Options& o) {
     };
     // let the doors (and the explored map) catch up with a late start
     for (float t = 0.0f; t < o.start; t += dt) stepScene(t);
+    // the sound the game would have played, beside the frames (audio.wav, audio_events.csv,
+    // audio_wave.png)
+    SoundBank bank;
+    std::unique_ptr<AudioRecorder> audio;
+    if (loadSounds(bank, o, true) > 0) {
+        audio = std::make_unique<AudioRecorder>(bank, o.fps);
+        audio->prime(game);
+    }
     // PNG encoding is slower than rendering: encode on worker threads while the GPU
     // renders the next frames.
     std::vector<std::future<bool>> pending;
@@ -460,6 +524,7 @@ int runCapture(const Options& o) {
         const float t = o.start + float(i) * dt;
         if (huntScene && game.huntSceneDone(t)) break;
         stepScene(t);
+        if (audio) audio->frame(game, i);
         ++written;
         if (huntScene && !game.hunters().empty()) {
             const Hunter& h = game.hunters()[0];
@@ -505,6 +570,14 @@ int runCapture(const Options& o) {
     if (writeFailed) {
         log::error("Could not write frames to {}", dir.string());
         return 1;
+    }
+    if (audio) {
+        std::vector<std::string> lines;
+        if (!audio->finish(dir, lines)) {
+            log::error("Could not write audio.wav to {}", dir.string());
+            return 1;
+        }
+        for (const std::string& l : lines) log::info("{}", l);
     }
 
     const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
@@ -817,6 +890,20 @@ int runInteractive(const Options& o) {
     Renderer renderer(gpu, window.hwnd(), w, h);
     renderer.setKit(kit);
 
+    // sound: the mixer plays through XAudio2; without a device the game is silent
+    SoundBank bank;
+    const int sounds = loadSounds(bank, o, true);
+    Mixer mixer(bank);
+    std::mutex audioLock;
+    AudioDevice audioOut;  // (declared after the mixer: closes first)
+    if (sounds > 0) {
+        std::string err;
+        if (audioOut.open(mixer, audioLock, err)) log::info("Sound: playing through XAudio2");
+        else log::warn("Sound off: {}", err);
+    }
+    std::vector<SoundEvent> soundEvents;
+    std::vector<SoundLoop> soundLoops;
+
     std::unique_ptr<Game> game;
     OverheadMap map;
     bool flashlight = o.flashlight;
@@ -894,6 +981,13 @@ int runInteractive(const Options& o) {
         const bool wasDead = game->playerDead();
         game->update(dt, in);
         if (wasDead && !game->playerDead()) reset = true;  // restarted at the spawn
+        if (audioOut.running()) {
+            game->collectSounds(soundEvents, soundLoops);
+            std::lock_guard<std::mutex> g(audioLock);
+            mixer.setListener(game->listener());
+            for (const SoundEvent& e : soundEvents) mixer.play(e);
+            mixer.setLoops(soundLoops);
+        }
         game->buildInstances(instances, !game->playerDead() || game->deathTime() < 0.25f);
 
         mapOpacity += ((showMap ? 1.0f : 0.0f) - mapOpacity) * std::min(1.0f, dt * 10.0f);
@@ -970,6 +1064,7 @@ int main(int argc, char** argv) {
             case Options::Mode::Shots: return runShots(*options);
             case Options::Mode::Bench: return runBench(*options);
             case Options::Mode::Encounters: return runEncounterTimer(*options);
+            case Options::Mode::SoundCheck: return runSoundCheck(*options);
             case Options::Mode::Interactive: return runInteractive(*options);
         }
     } catch (const std::exception& e) {

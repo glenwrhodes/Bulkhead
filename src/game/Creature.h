@@ -66,6 +66,7 @@ public:
     bool raycast(Vec3 o, Vec3 d, float maxDist, float& t, Vec3& n) const;
 
     Vec3 headPosition() const { return head_; }
+    float jaw() const { return jaw_; }  // as last posed (0 shut .. 1 wide): the game hisses on it
     Vec3 bodyCenter() const { return center_; }
     // Where each claw is (ML, MR, HL, HR) and whether it is planted this frame.
     Vec3 foot(int leg) const { return feet_[size_t(leg)]; }
@@ -106,6 +107,7 @@ private:
     std::array<bool, 4> planted_{};
     Vec3 head_, center_;
     float glow_ = 0.7f;
+    float jaw_ = 0.0f;
 };
 
 }  // namespace bh

@@ -8,7 +8,7 @@
 namespace bh {
 
 struct Options {
-    enum class Mode { Interactive, Capture, Shots, Bench, Overhead, Check, Encounters, Help };
+    enum class Mode { Interactive, Capture, Shots, Bench, Overhead, Check, Encounters, SoundCheck, Help };
     Mode mode = Mode::Interactive;
 
     std::filesystem::path output;  // capture/shots folder or overhead PNG

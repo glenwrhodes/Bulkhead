@@ -203,6 +203,7 @@ void Creature::updateFeet() {
 void Creature::poseRigid(const Mat4& body, float jaw, float glow, float arms, float legs, float time) {
     if (!valid_) return;
     glow_ = glow;
+    jaw_ = jaw;
     const std::vector<Mat4> local = localPose(jaw, arms, legs, -0.6f * std::abs(legs), time);
     for (size_t i = 0; i < bones_.size(); ++i) bones_[i].world = body * local[i];
     updateFeet();
@@ -294,7 +295,8 @@ Mat4 Creature::bodyFrame(const CrawlPath& path, const CreaturePose& p, float sOf
 void Creature::pose(const CrawlPath& path, const CreaturePose& p) {
     if (!valid_) return;
     glow_ = p.glow;
-    auto bone = [&](const char* n) -> Bone& { return bones_[size_t(find(n))]; };
+    jaw_ = p.jaw;
+    auto bone =[&](const char* n) -> Bone& { return bones_[size_t(find(n))]; };
     // a slight bob with each step
     const float bob = 0.014f * std::sin(4.0f * kPi * p.s / kStride);
 

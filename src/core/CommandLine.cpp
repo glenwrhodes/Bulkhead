@@ -32,6 +32,7 @@ std::string usageText() {
         "                                        report frame times, save sample frames\n"
         "  Bulkhead.exe --overhead <file.png>    write the top-down map of the maze (no GPU)\n"
         "  Bulkhead.exe --check                  load the models and build a ship, then report (no GPU)\n"
+        "  Bulkhead.exe --sound-check            open the sound device and play two sounds (~1 s)\n"
         "\n"
         "Options:\n"
         "  --seed N          maze seed (capture/overhead default 1234, window default random)\n"
@@ -94,6 +95,8 @@ std::optional<Options> parseCommandLine(int argc, char** argv, std::string& erro
             o.mode = Options::Mode::Help;
         } else if (a == "--check") {
             o.mode = Options::Mode::Check;
+        } else if (a == "--sound-check") {
+            o.mode = Options::Mode::SoundCheck;
         } else if (a == "--capture" || a == "--overhead" || a == "--shots" || a == "--bench" || a == "--encounters") {
             auto v = value();
             if (!v) return std::nullopt;
