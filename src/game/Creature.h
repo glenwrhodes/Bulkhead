@@ -40,6 +40,10 @@ struct CreaturePose {
     bool look = false;                      // turn the head toward lookAt
     Vec3 lookAt;
     float flinch = 0.0f;                    // 0..1: jolted back by a hit
+    // round 13: the threat and the coil before a leap
+    float rear = 0.0f;                      // 0..1: the front lifts off the surface (up to ~40 degrees)
+    float crouch = 0.0f;                    // 0..1: the body sinks toward the surface, knees bent
+    float arms = 0.0f;                      // 0..1: the scythes raised (as poseRigid's arms)
 };
 
 class Creature {
@@ -62,6 +66,10 @@ public:
     void captureDeath();
     void poseDeath(float t, float time);
     void appendInstances(std::vector<SceneInstance>& out) const;
+    // Moves the whole posed creature rigidly.
+    void transformAll(const Mat4& m);
+    // Swings the posed creature round its middle (turning round on the spot).
+    void rotateAboutCenter(Vec3 axis, float angle);
     // A ray against the creature's hit spheres. Returns true with the distance and normal.
     bool raycast(Vec3 o, Vec3 d, float maxDist, float& t, Vec3& n) const;
 

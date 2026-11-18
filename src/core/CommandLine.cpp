@@ -58,6 +58,8 @@ std::string usageText() {
         "  --sweep           encounters: try a grid of creature counts, drift timings and hearing\n"
         "  --test-lights N   bench: add N small short-lived lights in a ring round the camera (what\n"
         "                    each one costs per frame)\n"
+        "  --scene approach  capture: you stand still; a creature that has spotted you closes in\n"
+        "                    and leaps (the real AI; with --hunt original, as before round 13)\n"
         "  --scene window    capture: walk up to a viewport on the ship's edge, the stars outside,\n"
         "                    the creature crawling past behind you in the glass, turn to face it\n"
         "  --scene weave     capture: the window's movement code, forward held, down a straight\n"
@@ -110,7 +112,7 @@ std::optional<Options> parseCommandLine(int argc, char** argv, std::string& erro
             auto v = value();
             if (!v) return std::nullopt;
             if (*v != "walk" && *v != "fire" && *v != "crawl" && *v != "hunt" && *v != "fight" && *v != "weave" &&
-                *v != "window")
+                *v != "window" && *v != "approach")
                 return bad(*v);
             o.scene = std::string(*v);
         } else if (a == "--assets") {

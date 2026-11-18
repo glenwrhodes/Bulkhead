@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string_view>
 
 #include "game/Game.h"
 
@@ -301,10 +302,23 @@ void Creature::pose(const CrawlPath& path, const CreaturePose& p) {
     const float bob = 0.014f * std::sin(4.0f * kPi * p.s / kStride);
 
     // ---- body chain ----
+    // (crouching sinks it toward the surface; the head and neck go lowest)
+    const float sink = 1.0f - 0.42f * p.crouch;
     for (const char* n : kBodyBones) {
         Bone& b = bone(n);
-        Mat4 f = bodyFrame(path, p, -b.pivot.z, b.pivot.y + bob, b.pivot.x);
+        const bool front = std::string_view(n) == "head" || std::string_view(n) == "neck";
+        const float height = (b.pivot.y + bob) * sink - (front ? 0.06f * p.crouch : 0.0f);
+        Mat4 f = bodyFrame(path, p, -b.pivot.z, height, b.pivot.x);
         b.world = f * Mat4::translation(-b.pivot);
+    }
+    // rearing: the thorax, neck and head pivot up about the waist (the middle legs, on the
+    // thorax, then reach down to their planted claws)
+    if (p.rear > 0.0f) {
+        const Bone& w = bone("waist");
+        const Vec3 pivot = w.world.point(w.pivot);
+        const Vec3 right = normalize(w.world.dir({1, 0, 0}));
+        const Mat4 lift = Mat4::translation(pivot) * axisAngle(right, 0.7f * p.rear) * Mat4::translation(-pivot);
+        for (const char* n : {"thorax", "neck", "head"}) bone(n).world = lift * bone(n).world;
     }
     // the head turns toward what it is looking at, within limits
     {
@@ -340,7 +354,7 @@ void Creature::pose(const CrawlPath& path, const CreaturePose& p) {
             const float w = float(k + 1) / 6.0f;
             const float sway = 0.09f * w * std::sin(p.time * 2.4f - float(k) * 0.75f) +
                                0.05f * w * std::sin(p.s * 2.1f - float(k) * 0.6f);
-            Mat4 f = bodyFrame(path, p, -b.pivot.z, b.pivot.y + 0.025f * float(k) + bob * 0.5f, b.pivot.x + sway);
+            Mat4 f = bodyFrame(path, p, -b.pivot.z, (b.pivot.y + 0.025f * float(k) + bob * 0.5f) * sink, b.pivot.x + sway);
             const Vec3 o = column(f, 3);
             const Vec3 up = column(f, 1);
             const Vec3 fwdW = normalize(prevWorld - o);
@@ -355,13 +369,15 @@ void Creature::pose(const CrawlPath& path, const CreaturePose& p) {
         }
     }
 
-    // ---- forelimbs: folded against the thorax, twitching ----
+    // ---- forelimbs: folded against the thorax, twitching; raised for the threat ----
     for (const char* side : {"L", "R"}) {
         Bone& arm = bone((std::string("arm_") + side).c_str());
         Bone& fore = bone((std::string("fore_") + side).c_str());
         const Mat4& thorax = bone("thorax").world;
+        const float sgn = side[0] == 'L' ? -1.0f : 1.0f;
         const float tw = 0.06f * std::sin(p.time * 1.7f + (side[0] == 'L' ? 0.0f : 2.0f)) + 0.04f * p.jaw;
-        Mat4 local = Mat4::translation(arm.pivot) * Mat4::rotationX(tw) * Mat4::translation(-arm.pivot);
+        Mat4 local = Mat4::translation(arm.pivot) * Mat4::rotationX(tw + 0.9f * p.arms) *
+                     Mat4::rotationZ(-0.35f * p.arms * sgn) * Mat4::translation(-arm.pivot);
         arm.world = thorax * local;
         fore.world = arm.world;
     }
@@ -476,6 +492,19 @@ void Creature::pose(const CrawlPath& path, const CreaturePose& p) {
 Vec3 Creature::posedClaw(int leg) const {
     const int i = find(std::string("tibia_") + kLegNames[leg]);
     return bones_[size_t(i)].world.point(restFoot_[size_t(leg)]);
+}
+
+void Creature::transformAll(const Mat4& m) {
+    if (!valid_) return;
+    for (Bone& b : bones_) b.world = m * b.world;
+    for (Vec3& f : feet_) f = m.point(f);
+    head_ = m.point(head_);
+    center_ = m.point(center_);
+}
+
+void Creature::rotateAboutCenter(Vec3 axis, float angle) {
+    const Vec3 c = center_;
+    transformAll(Mat4::translation(c) * axisAngle(normalize(axis), angle) * Mat4::translation(-c));
 }
 
 void Creature::appendInstances(std::vector<SceneInstance>& out) const {

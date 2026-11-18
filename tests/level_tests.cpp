@@ -561,9 +561,9 @@ void testHunters() {
     // Round 11: ten loose, drifting toward the player and hearing footsteps. They all find
     // a place, drift legs happen, they close in on a player standing still (making walking
     // noise), and re-routing at cell centres never moves one more than 0.4 m in a step.
-    // The one exception is turning round on the path (a known issue since round 9, see
-    // Hunter::uTurns): those steps are counted and printed, not failed. The same ten with
-    // the original tuning are run too, to compare how often they turn round.
+    // Turning round on the path (snapped 0.7 m before round 13) is held to the same limit
+    // now that it swings round on the spot. The same ten with the original tuning are run
+    // too, to compare how often they turn round.
     int closestWith[2] = {0, 0};  // round 11, original
     for (bool round11 : {true, false}) {
         Game game(g_kit, p);
@@ -603,7 +603,7 @@ void testHunters() {
                 if (jump > 0.4f)
                     std::printf("    jump %.2f m: hunter %zu t %.2f state %s (%.2f s in it), last path change: %s%s\n",
                                 jump, k, t, toString(h.state()), h.stateTime(), h.lastRoute(),
-                                turned ? " (turned round: known issue)" : "");
+                                turned ? " (turning round)" : "");
                 // (feeding: the game poses it on the player's face, it is not crawling)
                 if (h.state() == HunterState::Feed) continue;
                 if (turned) maxTurnJump = std::max(maxTurnJump, jump);
@@ -623,11 +623,84 @@ void testHunters() {
         if (round11) CHECK(drifts > 0);
         closestWith[round11 ? 0 : 1] = closest;
         CHECK_MSG(maxJump < 0.4f, std::format("a hunter jumped {:.2f} m in one step", maxJump));
+        CHECK_MSG(maxTurnJump < 0.4f, std::format("a hunter jumped {:.2f} m turning round", maxTurnJump));
     }
     // drifting toward you brings them closer than wandering did
     CHECK(closestWith[0] < closestWith[1]);
+    // Round 13: the approach, you standing still. It closes in over the walls and ceiling,
+    // threatens (stopped, reared, jaws wide), coils and leaps, and has you. Its claws stay
+    // put while it threatens and coils, it never moves more than 0.4 m in a step before the
+    // leap, and some of the approach is off the floor. With the original tuning: no threat.
+    for (bool current : {true, false}) {
+        Game game(g_kit, p);
+        game.setHuntTuning(current ? HuntTuning::round11() : HuntTuning::original());
+        CHECK(game.setupHuntScene(false, true));
+        std::string seq;
+        HunterState last = HunterState::Dead;
+        const float dt = 1.0f / 30.0f;
+        float t = 0.0f, maxJump = 0.0f, maxSlide = 0.0f, threatAt = -1.0f, offFloor = 0.0f, chasing = 0.0f;
+        int leapSurface = -1;
+        Vec3 prev = game.hunters()[0].bodyCenter();
+        std::array<Vec3, 4> feet{};
+        std::array<bool, 4> planted{};
+        for (; t < game.huntSceneLength() && !game.huntSceneDone(t); t += dt) {
+            const int surfaceBefore = game.hunters()[0].surfaceKind();
+            game.stepHuntScene(t, dt);
+            const Hunter& h = game.hunters()[0];
+            const HunterState s = h.state();
+            if (s != last) {
+                seq += std::format(" {}@{:.1f}", toString(s), t);
+                if (s == HunterState::Threat) threatAt = length(h.headPosition() - game.camera().position);
+                if (s == HunterState::Leap) leapSurface = surfaceBefore;
+                last = s;
+            }
+            if (s == HunterState::Chase || s == HunterState::Stalk) {
+                chasing += dt;
+                if (h.surfaceKind() != 0) offFloor += dt;
+            }
+            const bool still = s == HunterState::Threat || s == HunterState::Coil;
+            for (int l = 0; l < 4; ++l) {
+                const Vec3 f = h.creature().foot(l);
+                if (still && planted[size_t(l)] && h.creature().planted(l))
+                    maxSlide = std::max(maxSlide, length(f - feet[size_t(l)]));
+                feet[size_t(l)] = f;
+                planted[size_t(l)] = h.creature().planted(l);
+            }
+            // (from the second step: before the first it has never been posed)
+            if (t > 0.0f && s != HunterState::Leap && s != HunterState::Feed) {
+                const float jump = length(h.bodyCenter() - prev);
+                if (jump > 0.4f)
+                    std::printf("    jump %.2f m at %.2f s, %s (%.2f s in it), last path change: %s, %s, %d turns; "
+                                "from (%.2f %.2f %.2f) to (%.2f %.2f %.2f), surface %d\n",
+                                jump, t, toString(s), h.stateTime(), h.lastRoute(), h.turning() ? "turning" : "not turning",
+                                h.uTurns(), prev.x, prev.y, prev.z, h.bodyCenter().x, h.bodyCenter().y, h.bodyCenter().z,
+                                h.surfaceKind());
+                maxJump = std::max(maxJump, jump);
+            }
+            prev = h.bodyCenter();
+        }
+        std::printf("  approach (%s tuning): %.1f s,%s; threat begun at %.1f m; leapt from surface %d; %.0f%% of the "
+                    "closing in off the floor; biggest step %.2f m, planted claws slid %.3f m; player %s\n",
+                    current ? "current" : "original", t, seq.c_str(), threatAt, leapSurface,
+                    100.0f * offFloor / std::max(dt, chasing), maxJump, maxSlide,
+                    game.playerDead() ? "dead" : "alive");
+        CHECK(game.playerDead());
+        CHECK(maxJump < 0.4f);
+        if (current) {
+            const size_t th = seq.find("threat"), co = seq.find("coil"), le = seq.find("leap"), fe = seq.find("feed");
+            CHECK_MSG(th != std::string::npos && co > th && le > co && fe > le && co != std::string::npos &&
+                          le != std::string::npos && fe != std::string::npos,
+                      "approach: threat, coil, leap, feed in that order");
+            CHECK(threatAt > 2.2f && threatAt < Hunter::kThreatRange + 0.5f);
+            CHECK(maxSlide < 0.02f);
+            CHECK(offFloor > 0.5f * chasing);
+        } else {
+            CHECK(seq.find("threat") == std::string::npos);
+        }
+    }
     for (bool fight : {false, true}) {
         Game game(g_kit, p);
+        game.setHuntTuning(HuntTuning::round11());
         CHECK(game.setupHuntScene(fight));
         std::string seq;
         HunterState last = HunterState::Dead;

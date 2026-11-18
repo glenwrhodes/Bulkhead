@@ -450,9 +450,10 @@ int runCapture(const Options& o) {
         log::info("Scene 'window': {:.1f} s, {} viewports in the ship, filmed in a {} section", game.windowSceneLength(),
                   game.level().viewports.size(), toString(game.moodAtCamera()));
     }
-    const bool huntScene = o.scene == "hunt" || o.scene == "fight";
+    const bool huntScene = o.scene == "hunt" || o.scene == "fight" || o.scene == "approach";
     if (huntScene) {
-        if (!game.setupHuntScene(o.scene == "fight")) {
+        game.setHuntTuning(huntTuning(o));  // (--hunt original: the creatures as before round 13)
+        if (!game.setupHuntScene(o.scene == "fight", o.scene == "approach")) {
             log::error("Scene '{}': no corridor for it (or the kit has no creature)", o.scene);
             return 1;
         }

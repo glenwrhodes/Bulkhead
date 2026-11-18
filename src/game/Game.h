@@ -188,7 +188,9 @@ public:
     // hunt: you walk a dark corridor, it stalks you on the ceiling, you back off and hit
     //       it twice, it charges, leaps, and you die.
     // fight: you hold a corridor while one charges; four hits and it dies.
-    bool setupHuntScene(bool fight);
+    // approach (round 13, capture --scene approach): you stand still and don't shoot; one
+    // that has spotted you closes in and leaps (the before/after film of the approach).
+    bool setupHuntScene(bool fight, bool approach = false);
     void stepHuntScene(float t, float dt);
     float huntSceneLength() const { return scene_.length; }
     bool huntSceneDone(float t) const { return scene_.endAt >= 0.0f && t >= scene_.endAt; }
@@ -218,6 +220,7 @@ private:
     };
     struct HuntScene {
         bool fight = false;
+        bool approach = false;
         std::vector<Int2> run;      // the corridor, player's end first
         Vec3 dir;                   // along the run, away from the player's end
         Vec3 start;                 // player's eye at t = 0

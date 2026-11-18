@@ -214,6 +214,22 @@ bulkhead_png_test(film_window film
   GAME  --capture "${CAP}/window" --scene window --res 1920x1080 --fps 30 --spp 16 --seed ${FILM_SEED}
   CHECK --dir "${CAP}/window" --at-least 480 --width 1920 --height 1080 --expect-motion)
 
+# The approach (round 13): you stand still, one that has spotted you closes in and leaps.
+# film_approach is the current behaviour. approach_original replays the behaviour before
+# round 13 (--hunt original), the sprint along the floor Glen saw; captures/approach_before
+# was made from the code before round 13 and is kept as it is. Label "diag".
+#   approach_after     the same scene, seed and start as approach_before, current code
+#   approach_original  the same with --hunt original (the old approach, replayed)
+#   film_approach      a second example, seed 42 (another ship, another corridor)
+bulkhead_png_test(film_approach film
+  GAME  --capture "${CAP}/approach" --scene approach --res 1920x1080 --fps 30 --spp 16 --seed 42
+  CHECK --dir "${CAP}/approach" --at-least 200 --width 1920 --height 1080 --expect-motion)
+add_test(NAME approach_after COMMAND Bulkhead --capture "${CAP}/approach_after" --scene approach --res 1920x1080
+         --fps 30 --spp 16 --seed ${FILM_SEED})
+add_test(NAME approach_original COMMAND Bulkhead --capture "${CAP}/approach_original" --scene approach --hunt original
+         --res 1920x1080 --fps 30 --spp 16 --seed ${FILM_SEED})
+set_tests_properties(approach_after approach_original PROPERTIES LABELS diag RUN_SERIAL TRUE)
+
 # Fixed views with ray tracing on and off, for side-by-side comparison: corridor, door,
 # room, junction, one corridor in each mood (lit, dim, dark, derelict), and the derelict
 # dressing (broken ceiling, steam, low pipe, beacon).

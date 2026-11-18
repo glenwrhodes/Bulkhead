@@ -79,11 +79,15 @@ milestone status are in `docs/PLAN.md`; update that table when a milestone lands
 - How often you meet a creature is measured, not guessed: `ctest -L encounters` (no GPU,
   `src/game/Encounters.*`). Re-run it after any change to the AI, the counts or the spawns.
   `HuntTuning` (in `Hunter.h`) holds the numbers; `--hunt original` is the game before round 11.
-- Re-routing a creature: use `Hunter::routeAhead` (keeps the path up to and including the
-  next cell) for anything new. Re-routing at the current cell centre snaps it sideways
-  when the new path turns there, because corners are rounded. `CrawlPath::project` without
-  a range can snap onto a stretch that passes nearby. Turning round on the path still snaps
-  (`Hunter::uTurns`, a known issue).
+- Re-routing a creature: use `Hunter::reaim` (or `routeAhead`) for anything new. Both keep
+  the path up to a cell at least 3.4 m ahead, and turn round smoothly when the goal is behind.
+  A plain `route` from the cell it stands in snaps it sideways if the new path turns there,
+  because corners are rounded. `route` now handles that itself with a virtual cell and a
+  swing about its middle (`turnT_`). `CrawlPath::project` without a range can snap onto a
+  stretch that passes nearby.
+- The approach (threat, coil, leap from any surface) is `HuntTuning::approach`, on in the
+  current tuning and off with `--hunt original`. Captures of the hunt, fight and approach
+  scenes take `--hunt`; `level_tests` and `audio_tests` run them with the current tuning.
 - Viewports (`corridor_straight_window`) come from their own `Rng` stream. A window cell
   still takes every draw the dressing stream would have taken (`Builder::skipDraws`). Keep it
   that way for anything new placed instead of a dressed piece: `level_tests` compares every

@@ -30,7 +30,8 @@
 
 namespace bh {
 
-enum class HunterState : uint8_t { Roam, Stalk, Chase, Leap, Feed, Dying, Dead };
+// (Threat and Coil came in round 13; appended so the older states keep their numbers)
+enum class HunterState : uint8_t { Roam, Stalk, Chase, Leap, Feed, Dying, Dead, Threat, Coil };
 const char* toString(HunterState s);
 
 // How the creatures find the player (round 11). Before it, nothing drew them toward you:
@@ -42,11 +43,18 @@ struct HuntTuning {
     int driftSpread = 4;         // cells: the goal is this far from you at most, never exact
     float hearWalk = 0.0f;       // metres of walking distance at which it hears footsteps
     float hearRun = 0.0f;        // ... running
-    // The game before round 11: three creatures, no drift, no hearing.
+    // Round 13: the approach. Closing in it keeps to the ceiling and walls (switching between
+    // them in straight corridors) instead of dropping to the floor; within ~6.5 m with a
+    // clear line it stops to threaten (rears, turns its head to you, jaws wide, scythes up,
+    // hisses), coils low, and leaps from whatever it is on.
+    bool approach = false;
+    // The game before round 11: three creatures, no drift, no hearing, the old approach.
     static HuntTuning original() { return HuntTuning{}; }
-    // Round 11: tuned with the encounter timer for a first sighting after about a minute.
+    // Round 11 (tuned with the encounter timer for a first sighting after about a minute),
+    // plus round 13's approach.
     static HuntTuning round11() {
         HuntTuning t;
+        t.approach = true;
         t.creatures = 10;
         t.drift = true;
         t.driftMin = 15.0f;
@@ -78,6 +86,12 @@ public:
     static constexpr int kHealth = 4;
     static constexpr float kRoamSpeed = 1.1f, kStalkSpeed = 1.35f, kChaseSpeed = 4.0f;
     static constexpr float kDriftSpeed = 1.5f;  // round 11: heading for roughly where you are
+    // round 13: the approach
+    static constexpr float kApproachSpeed = 3.0f;   // charging over the walls and ceiling
+    static constexpr float kThreatRange = 5.0f;     // stops to threaten within this, line clear
+    static constexpr float kThreatTime = 1.5f;      // rear, jaws, scythes, hiss
+    static constexpr float kCoilTime = 0.6f;        // sinks low before it springs
+    static constexpr float kTurnTime = 0.8f;        // turning round on its path
     static constexpr float kLeapRange = 3.3f, kLeapTime = 0.42f;
 
     Hunter(const Kit& kit, uint64_t seed);
@@ -114,10 +128,11 @@ public:
     int drifts() const { return drifts_; }  // drift legs started (the encounter timer reports them)
     // Leaps that reached a player who could not be grabbed (benchmarks).
     int reachedPlayer() const { return reachedPlayer_; }
-    // Times it has turned round on its path. Known issue (since round 9): the body snaps round
-    // in one step (the new path starts where it stands, so the parts behind the head pile up
-    // there and unfold as it moves off). It needs a real turning animation.
+    // Times it has turned round on its path. Since round 13 it turns on the spot over
+    // kTurnTime (the new path runs on past where it stands, so the body lies straight, and
+    // the whole creature swings round its middle onto it); before, it snapped round.
     int uTurns() const { return uTurns_; }
+    bool turning() const { return turnT_ >= 0.0f; }
     // Why its path last changed (for tests): "spawn", "roam", "drift", "heard", "alert", "chase".
     const char* lastRoute() const { return lastRoute_; }
 
@@ -129,6 +144,10 @@ private:
     // and branches off from there, so the new bend starts metres ahead and nothing under it
     // moves. Never turns round. False if the goal is behind it or unreachable.
     bool routeAhead(const Maze& maze, Int2 goal);
+    // Round 13: a hunting re-route: routeAhead, or (the goal behind it) turn round.
+    void reaim(const Maze& maze, Int2 goal);
+    // Which surface cell k of a new path gets (0 floor, 1 right wall, 2 ceiling, 3 left wall).
+    int surfaceFor(const Maze& maze, const std::vector<Int2>& cells, size_t k) const;
     // avoidDeadEnds (round 11 tuning): never a corridor closet, which means turning round.
     // ahead: called one cell before the end of the leg (see Hunter.cpp); false if no goal
     // could be reached without turning round.
@@ -165,6 +184,18 @@ private:
     int reachedPlayer_ = 0;
     const char* lastRoute_ = "spawn";
     int uTurns_ = 0;
+    // round 13
+    float turnT_ = -1.0f;           // >= 0: turning round, seconds into it
+    float turnAngle_ = 0.0f;        // how far it swings (from the way it faced to the new path's)
+    float turnTime_ = kTurnTime;    // (half a turn: kTurnTime; less for less)
+    float rear_ = 0.0f, crouch_ = 0.0f, arms_ = 0.0f;  // eased toward each state's pose
+    float threatAgain_ = 0.0f;      // after a missed leap it charges without threatening
+    float leapTime_ = kLeapTime, leapArc_ = 0.35f, leapBlend_ = 4.0f;
+    static constexpr float kLeapMax = 7.0f;  // round 13: farthest it springs from the coil
+    uint32_t surfaceSeed_ = 0;      // which walls and ceilings it picks, cell by cell
+    bool approachOn_ = false;       // (the tuning's approach, as of the last update: route() reads it)
+    bool approach(const HuntWorld& w) const { return w.tuning && w.tuning->approach; }
+    void startLeap(const HuntWorld& w, Vec3 head);
     // leap
     Mat4 leapFrom_;
     Vec3 leapTarget_;

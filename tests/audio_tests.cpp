@@ -140,6 +140,7 @@ void testGameSounds(const Kit& kit) {
     p.seed = 1234;
     for (bool fight : {false, true}) {
         Game game(kit, p);
+        game.setHuntTuning(HuntTuning::round11());  // (the approach: it threatens before it leaps)
         CHECK(game.setupHuntScene(fight));
         std::vector<SoundEvent> ev;
         std::vector<SoundLoop> loops;
@@ -175,6 +176,7 @@ void testGameSounds(const Kit& kit) {
         } else {
             CHECK(seen["creature_screech"] >= 1 && seen["player_thud"] == 1 && feeding);
             CHECK(firstAt["creature_screech"] < firstAt["player_thud"]);
+            CHECK(seen["creature_hiss"] >= 2);  // spotting you, and the threat
         }
     }
 }

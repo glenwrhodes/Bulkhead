@@ -25,8 +25,9 @@ the table under [Play](#play) and in `PLAY.txt` in the zip.
   jaws, hooked forelimbs, plated limbs, amber seams) that roam floors, walls and
   ceilings. Every so often one heads for roughly where you are, and they hear footsteps
   (running carries further; creeping crouched is silent). One that sees you stalks you
-  along the ceiling, charges, and leaps at your face; if it reaches you, you die. Four
-  hits kill one. Dead ones are replaced. A player exploring meets the first after about a
+  along the ceiling and charges over the walls and ceiling. A few metres off it stops,
+  rears, opens its jaws and hisses, sinks low, and leaps at your face from wherever it
+  clings; if it reaches you, you die. Four hits kill one. Dead ones are replaced. A player exploring meets the first after about a
   minute (`--creatures N` and `--hunt original` change this).
 - The generated ship (40 × 40 cells, 160 m square) is built from the Blender kit:
   corridors, rooms, doors and props.
@@ -118,7 +119,9 @@ Captures go to `captures/` (git-ignored):
 | `captures/walkthrough_a/`, `walkthrough_b/` | The 1080p walk from start to exit, in two halves (lit, dim, derelict, dark; it crouches under a low pipe at 71 s and 140 s) |
 | `captures/fire/` | Standing in a dark corridor and firing six shots (1080p, 6 s) |
 | `captures/crawl/` | The creature: along the floor, up the wall, across the ceiling overhead (1080p, 15 s, seed 42) |
-| `captures/hunt/` | A creature hunts the player down: stalks, charges, leaps; the player dies (1080p, ~10 s) |
+| `captures/hunt/` | A creature hunts the player down: stalks, charges over the walls, threatens, coils, leaps; the player dies (1080p, ~14 s) |
+| `captures/approach_before/`, `approach_after/` | One that has spotted you closes in and leaps, before round 14 (a sprint along the floor) and after (over the walls, threat, coil, leap off the wall); same seed and start |
+| `captures/approach/` | The approach on another ship (seed 42) |
 | `<capture>/audio.wav` | The sound of every capture, frame for frame, with `audio_events.csv` (what played when) and `audio_wave.png` |
 | `captures/window/` | A viewport on the ship's edge: stars outside, the corridor and the creature reflected in the glass, the flashlight across it, then the creature on the wall (1080p, 17.5 s) |
 | `video/blender/window/` | The viewport modelled in Blender step by step (`step_01..08.png`), Cycles finals, a Blender window screenshot |

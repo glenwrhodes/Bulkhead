@@ -626,7 +626,8 @@ float Game::redout() const {
         // a hint of red as one closes in
         float r = 0.0f;
         for (const Hunter& h : hunters_)
-            if (h.state() == HunterState::Chase || h.state() == HunterState::Leap)
+            if (h.state() == HunterState::Chase || h.state() == HunterState::Leap || h.state() == HunterState::Threat ||
+                h.state() == HunterState::Coil)
                 r = std::max(r, 0.25f * (1.0f - std::clamp(length(h.headPosition() - camera_.position) / 8.0f, 0.0f, 1.0f)));
         return r;
     }
@@ -1246,7 +1247,8 @@ void Game::setCrawlTime(float t) {
 // The hunt and fight scenes: the real AI, a scripted player
 // ---------------------------------------------------------------------------
 
-bool Game::setupHuntScene(bool fight) {
+bool Game::setupHuntScene(bool fight, bool approach) {
+    if (approach) fight = true;  // (the same corridor choice: enough light to see it come)
     const Maze& m = maze_;
     auto step = [](Int2 c, int d) { return Int2{c.x + kDx[d], c.y + kDy[d]}; };
     auto straightAlong = [&](Int2 c, int d) {
@@ -1288,13 +1290,14 @@ bool Game::setupHuntScene(bool fight) {
             }
     if (best.empty()) return false;
     scene_ = HuntScene{};
-    scene_.fight = fight;
+    scene_.fight = fight && !approach;
+    scene_.approach = approach;
     scene_.run = best;
     scene_.dir = dirVector(Dir(bestD));
     scene_.start = cellCenter(best[0]) + scene_.dir * 0.5f + Vec3{0, kEyeHeight, 0};
     scene_.yaw = std::atan2(-scene_.dir.x, -scene_.dir.z);
     scene_.pitch = -0.04f;
-    scene_.length = fight ? 16.0f : 24.0f;
+    scene_.length = approach ? 18.0f : fight ? 16.0f : 24.0f;
     camera_ = Camera{};
     sway_ = {};
     camera_.position = scene_.start;
@@ -1308,7 +1311,7 @@ bool Game::setupHuntScene(bool fight) {
     hunters_.clear();
     respawnAt_.clear();
     huntersWanted_ = 0;
-    spawnHunterAt(far, fight ? 0 : 2, maze_.params().seed * 977u + (fight ? 1u : 2u));
+    spawnHunterAt(far, fight && !approach ? 0 : 2, maze_.params().seed * 977u + (approach ? 3u : fight ? 1u : 2u));
     return !hunters_.empty();
 }
 
@@ -1330,8 +1333,15 @@ void Game::stepHuntScene(float t, float dt) {
         const Vec3 head = h.headPosition();
         const float dist = length(head - camera_.position);
         const bool hunting = h.state() == HunterState::Stalk || h.state() == HunterState::Chase ||
-                             h.state() == HunterState::Leap;
-        if (scene_.fight) {
+                             h.state() == HunterState::Leap || h.state() == HunterState::Threat ||
+                             h.state() == HunterState::Coil;
+        if (scene_.approach) {
+            // standing your ground, not firing: it has spotted you and comes; you watch it
+            if (t >= 0.5f && h.state() == HunterState::Roam) h.alert(huntWorld(false), false);
+            if (h.alive()) aimAt(h.bodyCenter() * 0.4f + head * 0.6f, 3.0f);
+            camera_.yaw = scene_.yaw;
+            camera_.pitch = scene_.pitch;
+        } else if (scene_.fight) {
             if (t >= 0.8f && h.state() == HunterState::Roam) h.alert(huntWorld(false), true);
             if (h.alive() && hunting) aimAt(h.bodyCenter() * 0.6f + head * 0.4f, 7.0f);
             else if (!h.alive()) aimAt(h.bodyCenter(), 2.0f);
@@ -1473,6 +1483,7 @@ void Game::collectSounds(std::vector<SoundEvent>& events, std::vector<SoundLoop>
         const HunterState s = h.state();
         if (s != ears.state) {
             if (s == HunterState::Stalk) sound(Snd::CreatureHiss, h.headPosition(), 1.0f);
+            if (s == HunterState::Threat) sound(Snd::CreatureHiss, h.headPosition(), 1.3f, 0.92f);
             if (s == HunterState::Leap) sound(Snd::CreatureScreech, h.headPosition(), 1.1f);
             if (s == HunterState::Dying) sound(Snd::CreatureDeath, h.headPosition(), 1.0f);
             ears.state = s;

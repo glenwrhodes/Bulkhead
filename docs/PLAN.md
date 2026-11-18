@@ -24,7 +24,7 @@ Custom C++20 engine on DirectX 12 with DXR ray tracing (RTX 4090 Laptop GPU, ray
 | 12 | Part 3, round 11: measure how long it takes to meet a creature; more of them, drifting toward the player and hearing footsteps; frame rate with them loose | **Done (round 11)**: see Finding the creatures |
 | 13 | Round 12: viewports into space on the ship's edge (Blender piece built in steps, stars, glass that reflects), the window film | **Done (round 12)**: see Viewports |
 | 14 | Round 13: sound (mixer, window output, WAV beside every capture, ~25 sounds, credits) | **Done (round 13)**: see Sound |
-| 15 | Round 14: the approach (crawl in on walls and ceiling, stop, hiss, crouch, leap from any surface) | Planned |
+| 15 | Round 14: the approach (crawl in on walls and ceiling, stop, hiss, crouch, leap from any surface), turning round without a snap | **Done (round 14)**: see The approach |
 | 16 | Round 15: lights without a cap: sample a few lights per pixel by importance instead of shadow-testing all of them (see Viewports, "How many lights") | Proposed |
 | 17 | Round 16: the climbing film (floor, wall, ceiling, wall, floor, close up) | Planned |
 | 18 | Round 17: the motion scanner (blips on the minimap and map) | Planned |
@@ -463,6 +463,91 @@ frames:
   (17.50 s = 525 frames × 1470 samples, peak 0.49: the door, four footsteps, claws closing in from 6.5 to 3.5 m, the hiss at 2.8 m at
   14.5 s).
 - The sound itself has not been listened to by anyone on the AI side.
+
+## The approach (round 14)
+
+Glen: "It's so much cooler if we could see the alien, crawling toward you, hissing and
+opening its mouth, leaning down, before leaping at you."
+
+**Before** (`captures/approach_before`, made from the code before this round and kept as it
+is). In `--scene approach` you stand still and don't shoot; seed 1234, a derelict corridor:
+- **0.5-5 s:** it stalks, edging in along the ceiling from 18 m to 13 m.
+- **5 s:** it charges at 4 m/s and drops to the floor for the last three cells.
+- **7.5 s:** it leaps from 3.3 m.
+- **7.9 s:** it has you.
+- **What you saw:** a floor sprint and a leap (frame 218 is the sprint, 230 the leap).
+
+**Now** (`HuntTuning::approach`, on in the current tuning and off with `--hunt original`):
+- **Closing in:**
+  - Stalking and charging, it keeps to the ceiling and walls. In straight corridors each cell
+    gets the ceiling (45%), the right wall or the left wall, from a hash of the cell, so a
+    re-route doesn't reshuffle the cells ahead. Rooms and doorways are still floor.
+  - It charges at 3 m/s (was 4).
+- **Threat (1.5 s):** within 5 m with a clear line to you, it stops.
+  - It rears: thorax, neck and head pivot up to 40° about the waist, away from the surface it
+    is on. On the ceiling that's leaning down at you; on a wall, swinging out into the corridor.
+  - Its head turns to you, its jaws open wide and quiver, and its scythes rise.
+  - Its seams and throat flare, lighting the surface it's on.
+  - A deeper, closer hiss than the one it gives on spotting you.
+  - If you back off past 7.5 m it chases again. A hit makes it coil at once.
+- **Coil (0.6 s):** it sinks toward the surface, 42% lower with the head lowest. Its knees
+  bend through the IK, and its claws stay planted (0.000 m of slide in the test).
+- **Leap:**
+  - **Distance:** from whatever it's on, if you're within 7 m (else it closes in again).
+  - **Flight:** it takes longer the farther it goes (distance / 8 m/s, 0.42-0.8 s). Off a
+    wall or the ceiling it drops at you with little arc and twists upright on the way.
+  - **After a miss:** it lands and charges, and for 4 s leaps close without threatening.
+- **Pose controls:** `CreaturePose` gained `rear`, `crouch` and `arms`, eased in and out by
+  the hunter.
+
+**Turning round no longer snaps** (the 0.7 m snap from round 11, and two more found here):
+- **The cause:** a re-route that turns at the cell it stands in makes a rounded corner there,
+  up to half a metre from its line.
+- **The fix:** instead, the new path starts with one virtual cell, a wall's if need be, so the
+  body lies straight on it. The creature is placed so its middle stays put (found by projecting
+  onto the new path) and swings onto the new direction about its middle. Half a turn takes
+  0.8 s, less for less.
+- **Turning round:** the virtual cell is the one ahead. It turns, goes back to the centre and
+  takes the new way.
+- **Already past the centre with the way on to one side:** the same.
+- **At the centre with the way on to one side:** the virtual cell is behind it on the new way;
+  it turns on the spot.
+- **Hunting re-routes** (the alert, stalk to chase, threat or coil back to chase, each cell
+  centre) now go through `Hunter::reaim`. That is `routeAhead`, anchored at the first cell
+  centre at least 3.4 m ahead, or a turn if you're behind it.
+  - The alert had been snapping it 1.2 m sideways: it re-routed mid-cell in the first cell of
+    its path.
+- **Checks:**
+  - `level_tests`: ten creatures for 150 s, the largest step while turning is 0.01 m (was 0.7).
+  - The approach scene: no step above 0.4 m before the leap, under either tuning.
+
+**After** (`captures/approach_after`, same scene, seed and start):
+
+| | Before | After |
+|---|---|---|
+| Stalking | 0.5 s | 0.5 s |
+| Charge | 5.0 s, finishing on the floor | 5.0 s, over the walls and ceiling at 3 m/s |
+| Threat | none | 8.1-9.6 s, at 5.0 m, on the right wall |
+| Coil | none | 9.6-10.2 s |
+| Leap | 7.5 s, from 3.3 m off the floor | 10.2 s, from 5.1 m off the wall |
+| It has you | 7.9 s | 10.9 s |
+
+- **The frames:** 230 is coming in high along the wall, 262 the threat (reared off the wall,
+  the pale open jaws turned to you, behind a cable's sparks), 300 the coil and 318 the leap
+  (jaws wide, scythes up).
+- `film_approach` is a second example on seed 42, in a cleaner dim corridor: threat at
+  5.1 m, leap from 5.5 m. Frame 322, the leap straight at the camera, is the strongest frame.
+- The hunt film now ends threat (from 2.9 m) → coil → leap → feed. In the fight film the
+  creature dies on the wall at 5.8 m, before it can threaten.
+- **Weak spot:** a threat on a wall reads less clearly than one on the floor or ceiling,
+  because rearing swings it sideways rather than up.
+
+**Encounters with the approach** (`encounters_new`, 30 runs of 10 min):
+- First seen 71 s on average (median 58 s), still in the 45-75 s target.
+- First death 87 s (was 67).
+- Deaths 6.5 per 10 min (was 9.0).
+- Creatures in view 22 s per 10 min (was 10.8).
+- Killed before seeing one: 1 of 30 runs.
 
 ## The walking weave (fixed after round 10)
 
