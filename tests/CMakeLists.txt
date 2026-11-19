@@ -293,6 +293,21 @@ foreach(mode all sampled plain)
   set_tests_properties(glow_ref_${mode} PROPERTIES LABELS diag RUN_SERIAL TRUE)
 endforeach()
 
+# The grain in the films: one frame of the walk (a derelict corridor, 96.6 s) as the films
+# render it (12 samples), with the sampled lighting at 2 and 4 picks and with every light
+# tested, to compare side by side. Label "diag".
+foreach(v sampled picks4 all)
+  set(extra "")
+  if(v STREQUAL "picks4")
+    set(extra --light-picks 4)
+  elseif(v STREQUAL "all")
+    set(extra --lights all --light-caps off)
+  endif()
+  add_test(NAME film_grain_${v} COMMAND Bulkhead --capture "${CAP}/film_grain_${v}" --res 1920x1080 --fps 30 --spp 12
+           --start 96.6 --frames 2 --seed ${FILM_SEED} ${extra})
+  set_tests_properties(film_grain_${v} PROPERTIES LABELS diag RUN_SERIAL TRUE)
+endforeach()
+
 # The motion scanner (round 17): you hold a junction; blips close in on the minimap from
 # three ways until one comes into view at the end of the corridor ahead. Ping in audio.wav.
 bulkhead_png_test(film_scanner film

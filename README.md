@@ -20,23 +20,30 @@ driver.
 Find the red airlock: it is the room farthest from where you start. The controls are in
 the table under [Play](#play) and in `PLAY.txt` in the zip.
 
-**Current state (rounds 5-11):**
+**Current state (after part 3 of the video):**
 - Ten things live in the ship: biomechanical crawlers (eyeless wedge skull, four petal
   jaws, hooked forelimbs, plated limbs, amber seams) that roam floors, walls and
   ceilings. Every so often one heads for roughly where you are, and they hear footsteps
   (running carries further; creeping crouched is silent). One that sees you stalks you
   along the ceiling and charges over the walls and ceiling. A few metres off it stops,
   rears, opens its jaws and hisses, sinks low, and leaps at your face from wherever it
-  clings; if it reaches you, you die. Four hits kill one. Dead ones are replaced. A player exploring meets the first after about a
-  minute (`--creatures N` and `--hunt original` change this).
+  clings; if it reaches you, you die. Four hits kill one. Dead ones are replaced. A player
+  exploring meets the first after about a minute (`--creatures N` and `--hunt original`
+  change this).
+- A motion scanner on the minimap and the map: every couple of seconds a pulse sweeps out
+  25 m, and anything moving that it passes, through walls, leaves a soft green blob. It
+  gives a direction and a rough distance, not a cell. The ping gets quicker, louder and
+  higher as something closes in. A creature holding still doesn't show.
 - The generated ship (40 × 40 cells, 160 m square) is built from the Blender kit:
   corridors, rooms, doors and props.
 - It is split into sections, each with a mood: **lit**, **dim** (warm, failing lights),
   **dark** (dead lights, red emergency lighting) and **derelict** (flickering and strobing
   tubes, rust and grime, haze). The deeper into the ship you go, the worse it gets.
-- It is ray traced with soft shadows from every fixture light, one bounce of global
+- It is ray traced with soft shadows from the fixture lights, one bounce of global
   illumination, glossy reflections, glass, and haze that the lights and your flashlight
-  shine through.
+  shine through. Each pixel weighs every light in range and shadow-tests the two that
+  matter most there, so the number of lights hardly costs anything: every creature's amber
+  glow lights the walls round it, and so do sparks, bolts and the muzzle flash.
 - You can walk it with keyboard and mouse, with collision. Doors open as you approach.
 - Derelict corridors have torn-open ceilings with hanging panels and live cables that spark,
   burst pipes venting steam, debris, red emergency beacons, and low pipe bundles you have
@@ -97,20 +104,35 @@ Bulkhead.exe --bench out --res 1920x1080                       # window-mode fra
 Bulkhead.exe --bench out --res 1920x1080 --creatures 10        # the same with ten creatures loose, hunting the walk
 Bulkhead.exe --encounters out                                  # no GPU: how long until an exploring player first sees a creature
 Bulkhead.exe --overhead map.png --seed 7                       # top-down map with sections in colour, no GPU
+Bulkhead.exe --capture out --scene hunt --res 1920x1080 --spp 16   # a scripted film instead of the walk
 Bulkhead.exe --help                                            # also --size, --flashlight on|off, --haze X, --hunt original
 ```
+
+`--scene` is one of `walk` (the default), `fire`, `crawl`, `hunt`, `fight`, `approach`,
+`threat`, `climb` (add `--overlay` for the drawing over it), `scanner`, `window`, `glow` and
+`weave`. Every capture writes its sound beside the frames (`audio.wav`). `--temporal`
+renders a capture as the window does (one sample a frame plus history), so its noise
+shows. `--lights all` is the lighting before sampling, for comparisons.
 
 ## Test
 
 ```
 ctest --test-dir build -C Release -L "unit|smoke" --output-on-failure    # quick
-ctest --test-dir build -C Release -L film --output-on-failure            # the 1080p film captures (~20 min)
-ctest --test-dir build -C Release -L bench                               # the timing runs (~2.5 min each)
-ctest --test-dir build -C Release -L encounters                          # time to first see a creature, before/after (~1.5 min)
+ctest --test-dir build -C Release -L film --output-on-failure            # the 1080p film captures (40-75 min of renders and checks)
+ctest --test-dir build -C Release -L bench                               # the timing runs (~2.5 min each, five of them)
+ctest --test-dir build -C Release -L encounters                          # time to first see a creature, before/after (~1 min)
+ctest --test-dir build -C Release -L "package|weave"                     # the download unpacked and run; the straight-walk capture
 ```
 
-A single ctest command is cut off after 10 minutes on this machine, so run the two halves
-of the walk film separately (`-R film_walkthrough_a`, `-R film_walkthrough_b`).
+`-L diag` holds comparisons that are not part of the suite (the cost of each light, the
+converged lighting references, previews).
+
+A single ctest command is cut off after 10 minutes on this machine, so run the films in
+pieces. Each half of the walk takes 5-8 minutes to render and 3.5 or more to check, so
+render and check separately: `-R film_walkthrough_a_run`, then
+`-R film_walkthrough_a_check -FS film_walkthrough_a` (`-FS` stops the check from rendering
+it again). The other films fit three or four to a command, for example
+`-R "^film_(fire|crawl|hunt)_"`.
 
 Captures go to `captures/` (git-ignored):
 
@@ -124,10 +146,11 @@ Captures go to `captures/` (git-ignored):
 | `captures/approach/` | The approach on another ship (seed 42) |
 | `captures/threat/` | The threat close up: on the ceiling of a lit corridor, reared down at you with its jaws open, then the coil and the leap |
 | `captures/glow_capped/`, `glow_all/`, `glow_sampled/` | Ten creatures' glow lighting a dark corridor, rendered as the window does: before round 18 (only three creatures lit), every light tested, and the sampled lighting that replaced it |
+| `captures/glow_compare/` | Round 19's two grain fixes, before and after: frames 250 and 380 of `glow_sampled` (and 380 with every light tested), and the walk at 96.6 s (`walk_2900_before`, `_after`, `_all`) |
 | `captures/scanner/` | The motion scanner: holding a junction, blips close in on the minimap from three ways, the pings quicken, and one comes into view at the end of the corridor |
 | `captures/climb/`, `climb_overlay/` | The crawl as a showcase: floor, wall, the wall-to-ceiling edge, ceiling, down the far wall; then the same frames with the legs, footholds, step arcs, surface and gait drawn over them |
 | `<capture>/audio.wav` | The sound of every capture, frame for frame, with `audio_events.csv` (what played when) and `audio_wave.png` |
-| `captures/window/` | A viewport on the ship's edge: stars outside, the corridor and the creature reflected in the glass, the flashlight across it, then the creature on the wall (1080p, 17.5 s) |
+| `captures/window/` | A viewport on the ship's edge: stars outside, the corridor reflected in the glass, the flashlight across it, the creature first seen in the next viewport's glass, then the turn to face it on the wall (1080p, 17.5 s) |
 | `video/blender/window/` | The viewport modelled in Blender step by step (`step_01..08.png`), Cycles finals, a Blender window screenshot |
 | `captures/fight/` | The player kills one: four hits as it charges; it dies on its back (1080p, ~11 s) |
 | `video/blender/creature/` | Blender renders of the creature: turntable, hero shot, crawl cycle |
@@ -148,11 +171,14 @@ src/core     image + PNG, logging, command line, math, Win32 window (raw mouse)
 src/assets   kit loader (cgltf): assets/*.glb -> shared vertex/index pool, parts, lights
 src/world    maze generator, sections and moods, level builder (maze -> kit pieces, lights,
              colliders, props), collision, scripted walk path, overhead map
-src/game     game state: player, doors, gun viewmodel, scripted walk, showcase viewpoints
+src/game     game state: player, doors, gun and effects, the creature and its hunting AI, the
+             motion scanner, the encounter timer, the scripted films, the crawl overlay,
+             what makes a sound when
+src/audio    software mixer (distance, panning, muffling, reverb), sound list, XAudio2 output
 src/render   D3D12 device; ray-traced renderer (BLAS per part, TLAS per frame, accumulation)
 shaders/     trace.hlsl (path tracer, cs_6_5 RayQuery), present.hlsl (AgX tonemap + HUD)
 art/blender  kit generator scripts and the .blend
-assets/      exported kit (.glb) + manifest
+assets/      exported kit (.glb) + manifest; sounds/ (23 MP3s and CREDITS.md)
 tests/       unit tests, PNG checker, ctest definitions
 package/     PLAY.txt and third-party notices that go in the download
 cmake/       shader compiler lookup; PackageZip / CheckPackage (the download); TestSummary
@@ -171,5 +197,5 @@ unpack-and-run check, plus a short ray-traced capture.
 
 ## Copyright
 
-Copyright © 2026 Tiny Moosh Games Inc. All rights reserved. Third-party code (stb, cgltf)
-is under its own licenses; see `package/THIRD_PARTY_NOTICES.txt`.
+Copyright © 2026 Tiny Moosh Games Inc. All rights reserved. Third-party code (stb, cgltf,
+dr_libs) is under its own licenses; see `package/THIRD_PARTY_NOTICES.txt`.

@@ -28,7 +28,7 @@ Custom C++20 engine on DirectX 12 with DXR ray tracing (RTX 4090 Laptop GPU, ray
 | 16 | Round 15 (built as round 18): lights without a cap: sample a few lights per pixel by importance instead of shadow-testing all of them | Done (see "Sampled lighting") |
 | 17 | Round 16: the threat filmed close; the climbing film, plain and with the crawl overlay (see "The climb") | Done |
 | 18 | Round 17: the motion scanner (blips on the minimap and map), the scanner film; the legs 20% slower | Done (see "The motion scanner") |
-| 19 | Round 18: final pass (re-measure, every film with sound) | Planned |
+| 19 | Round 19: final pass (two causes of grain in the sampled lighting found and fixed, the window film's framing, every film rendered again with sound, the whole suite, the docs) | **Done (round 19)**: see "Final pass" |
 
 ## Maze generation (`src/world/Maze.*`)
 
@@ -351,8 +351,12 @@ step for the video.
   Looked at that steeply, it mirrors the opposite wall 4-6 m down the corridor, where the
   creature is coming in along the ceiling and down the wall.
 - **13-17.5 s:** you turn to face it, about 3 m away on the wall, hissing.
-- **Known flaw:** during that pan the creature, waiting on the ceiling far down the corridor, is
-  briefly visible directly at the right edge of the frame before it shows in the reflection.
+- **Framing fixed in round 19:** during that pan the creature, waiting on the ceiling far down
+  the corridor, showed directly at the right edge of the frame before it showed in the
+  reflection. The frame's right edge was 97° round from straight out, a little past straight
+  down the corridor. The camera now aims 0.56 m short of the far viewport's middle (38° round
+  instead of 49°, edge at 86°), and the creature keeps to the far side of the ceiling (93° or
+  more). The far viewport sits right of centre, and the creature is first seen in its glass.
 - **Other tests:** `window_smoke` (smoke) and `window_preview` (diag, 2 frames a second).
   `level_tests` checks that the scene finds a viewport and that the creature comes within 1-4 m.
 
@@ -605,9 +609,11 @@ sees):
 1. **Weigh every light, without rays.** For each fixture in the 3 × 3 cells and each
    short-lived light: what it would add here if nothing were in the way (power, distance,
    range, angle, the surface's BRDF). These add up to the unshadowed light S, exactly.
-   (Past 16 short-lived lights, a random 16 of them are weighed, each standing for its share.)
-2. **Pick two at random**, each in proportion to what it adds (weighted reservoir sampling:
-   one pass, no list). A light adding 60% of S is picked 60% of the time.
+   (Only when more than 32 short-lived lights reach one point are a random 32 of those
+   weighed, each standing for its share. See "The grain on every surface" below.)
+2. **Pick two**, each in proportion to what it adds. A light adding 60% of S is picked 60%
+   of the time. Since round 19 the picks are spread evenly instead of drawn independently:
+   see "The grain in the films" below.
 3. **Shadow-test only those two**, each to a random point on the light (soft shadows).
 4. **Scale:** the two picks say what share of the light gets through (per colour), and that
    share multiplies S. Where all the lights are visible, or none are, the answer is exact and
@@ -615,7 +621,8 @@ sees):
 5. The frames' history (window) and sub-frames (captures) average the noise away.
 
 Bounce and reflection rays (which never had shadow rays to lights) add up the fixtures as
-before and pick one short-lived light in proportion to what it adds (`bounceDirectSampled`).
+before, and add up every short-lived light too (`bounceDirectSampled`; past 32 lights in the
+scene, every (count / 32)th from a random start, each standing for its share).
 
 **Switches:** `--lights all` is the old shading (every light in range tested, the code kept
 as it was), and with it the old caps come back (`--light-caps on|off`, default on with
@@ -635,10 +642,17 @@ right on average, noisier). `--light-picks 1-4` (default 2).
 | Sampled, 1 pick | 6.0 ms | | | | 7.0 ms | | 7.2 ms |
 | Sampled, 4 picks | 7.0 ms | | | | 7.7 ms | | 8.1 ms |
 
-(The table in "How many lights" was 8.8 / 10.2 / 10.9 / 13.9 / 17.9 ms on the code of round 12.)
-Each extra light used to cost ~0.27 ms; now ~0.013 ms: the remaining cost is weighing it,
-not tracing. With none extra it is 2.2 ms faster too, because the fixtures (11 lit in range
-on average) are no longer each a shadow ray.
+| Round 19, one run of both: every light tested | 7.6 ms | 8.9 ms | 9.8 ms | 11.8 ms | 15.4 ms | 22.6 ms | 36.0 ms |
+| Round 19: sampled, 2 picks, after both grain fixes | 6.1 ms | 6.4 ms | 6.7 ms | 7.0 ms | 7.9 ms | 9.0 ms | 9.6 ms |
+
+(The table in "How many lights" was 8.8 / 10.2 / 10.9 / 13.9 / 17.9 ms on the code of round 12.
+The first four rows are round 18's run; round 18's sampled code measured 6.3 / 7.2 / 8.7 ms at
+0 / 32 / 120 on the day of the fixes. This laptop drifts: the same shader read 6.1 ms and,
+an hour later, 7.2 ms with no extra lights, so only numbers from one run compare.)
+Each extra light used to cost ~0.27 ms. Up to 32 it now costs ~0.06 ms (weighing it at the
+surface the camera sees and adding it at the bounce and reflection hits, no tracing), and
+~0.02 ms past that. With none extra it is 2.2 ms faster too, because the fixtures (11 lit in
+range on average) are no longer each a shadow ray.
 
 **The real game** (`bench_creatures*`, label `bench`: the whole walk, ten creatures hunting it):
 
@@ -647,6 +661,9 @@ on average) are no longer each a shadow ray.
 | Before: every light, capped (`bench_creatures_all`) | 7.07 ms | 9.51 ms | 8.68 ms |
 | Every light, no caps (`bench_creatures_all_uncapped`) | 7.26 ms | 9.62 ms | 8.75 ms |
 | Now: sampled, no caps (`bench_creatures`) | 5.89 ms | 7.79 ms | 6.41 ms |
+| Round 19, one run: every light, capped | 7.38 ms | 9.88 ms | 8.98 ms |
+| Round 19: every light, no caps | 7.19 ms | 9.79 ms | 8.81 ms |
+| Round 19: sampled, no caps, after both grain fixes | 5.88 ms | 7.78 ms | 6.68 ms |
 
 (The bench's creatures are mostly far off and dark sections have few fixtures, so lifting the
 caps alone costs little here; the ring test above is the hard case. Dark sections: 5.92 vs
@@ -663,6 +680,65 @@ a frame plus history, so the noise shows):
 - `film_glow_all`: every light tested, all ten lit: the reference look (32-43 ms a frame here).
 - `film_glow_sampled`: now (31 ms a frame here: these renders also read each frame back).
 - `glow_plain` (diag): the textbook estimator, for comparison: fine grain over every wall.
+
+**The grain on every surface (found and fixed in round 19):**
+- **What was seen:** frame 380 of `glow_sampled` was grainy on the walls, the pipes and the
+  gun, not only on the creature, where `glow_all` was clean.
+- **Not the cause:** the frame-to-frame averaging. It keeps 6 frames of history with a
+  creature within 14 m, the same for both films.
+- **The cause:** two shortcuts for "many lights" that the glow scene trips, because ten
+  creatures are 20-24 short-lived lights:
+  - At the surface the camera sees: with more than 16 lights in the scene, a random 16 were
+    weighed, with repeats, each counted as 1/16 of all of them. So S, the "exact" unshadowed
+    sum, was a dice roll: a creature 1 m away could be counted 0, 1, 2 or 3 times. That
+    grain is on every surface the creature lights, shadow or not, and the gun too.
+  - At bounce and reflection hits: one light was picked from a random 6 and divided by its
+    chance, so the bounced glow was grainy as well.
+  - Frame 250 looked clean because the walls there are lit by many creatures about equally,
+    so which ones were counted mattered little. At frame 380 one creature a metre away gives
+    most of the light.
+- **The fix** (`trace.hlsl`):
+  - At the surface the camera sees: a cheap pass over all the lights finds the ones that reach
+    the point (in range, on its lit side). All of those are weighed, so S is exact again. Only
+    past 32 reaching one point are a random 32 kept, without repeats.
+  - At bounce and reflection hits: all of them are added up (past 32 in the scene, every
+    (count / 32)th from a random start). The diffuse BRDF is applied once, at the lights'
+    average direction.
+  - Tried and dropped: finding the lights that reach each bounce hit, as at the camera's
+    surface. It took the 120-light test from 9.7 to 12.7 ms.
+- **Cost:** the last row of the table above. In the cost test, 32 lights went from 7.2 to
+  7.9 ms and 120 from 8.7 to 9.6 ms (every light tested: 15.4 and 36.0 ms). In the real
+  game (ten creatures hunting the walk) the median is unchanged: 5.88 ms, was 5.89.
+- **Before and after:** `captures/glow_compare/frame_0380_before.png`, `_after.png` and
+  `_all.png` (every light tested), and `frame_0250_before.png` / `_after.png`.
+  `glow_ref_sampled` and `glow_ref_all` (converged) still look the same.
+- **What is left at frame 380:** fine grain on the creature itself and on the wall right
+  beside it, where its legs and plates half-hide its own lights. That is the partial-shadow
+  noise described below, and it is still more than with every light tested.
+
+**The grain in the films (found and fixed in round 19):**
+- **What was seen:** re-rendering the walk, the walls of dim and derelict corridors were
+  visibly grainier at the films' 12 samples than they had been with every light tested.
+  Lit corridors were clean. (`captures/glow_compare/walk_2900_before.png`, `_all.png`.)
+- **The cause:** the two picks were drawn independently for every sample. Where a wall is
+  lit by several fixtures and some are blocked (pipes, hanging panels, door frames), each
+  sample's answer depends on which two it happened to draw, and 12 samples don't average
+  that out. Round 18 had only compared with the camera still and 256 samples.
+- **The fix:** the picks are spread evenly. The lights' weights are laid end to end (kept in
+  a list of up to 32 while they are added up), and pick k takes the light at
+  (u + k / picks) of the way along. u is the pixel's own number, moved on by the golden
+  ratio each frame or sub-frame. Over a film frame's 12 sub-frames the 24 picks land evenly
+  along the lights: one adding a quarter of the light gets 6 of them, not "6 on average".
+  The window's history gains the same way while the camera holds still.
+- **Result:** `walk_2900_after.png` is about as clean as `walk_2900_all.png`. Four
+  independent picks (`film_grain_picks4`, before this fix) were still grainier than that.
+- **Cost:** none that could be measured: 7.17 / 9.57 / 12.01 ms against 7.24 / 9.49 /
+  11.87 ms for independent picks, at 0 / 32 / 120 extra lights, run one after the other
+  (on a slow hour: see the note under the table).
+- **Tried and dropped:** a second pass over the lights instead of the list, weighing them
+  again up to the last pick: about 0.5 ms a frame slower.
+- **Checks:** `film_grain_sampled`, `film_grain_picks4`, `film_grain_all` (diag): one frame
+  of the walk at 96.6 s, as the films render it.
 
 **What the noise looks like, and where it is worse:**
 - Walls and floor lit by many creatures at once: as clean as testing every light (frame 250).
@@ -694,7 +770,8 @@ legs. Claws still land and stay put; each lands 25% farther ahead, and the claw 
   placement fitted before, the same one is chosen.
 - Encounters: first seen 74.3 s mean / 57.8 s median, first death 81.1 s, identical (head bob
   follows the stride, which shifts later events a hair: 6.1 deaths per 10 min, was 6.2).
-- Re-rendered: both climb films. Not re-rendered: hunt, fight, approach, threat, window.
+- Re-rendered: both climb films. Not re-rendered then: hunt, fight, approach, threat, window
+  (all were in round 19).
 
 ## The motion scanner (round 17)
 
@@ -726,6 +803,91 @@ not a specific location... blobs indicating there was 'something coming'." `src/
   off (mean 1.2 m), never one near a still contact or one at 30 m; the first ping is the empty
   one, later ones higher and louder and closer together; the scene shows one in view between 5
   and 20 s, with blips from at least two directions, and you alive.
+
+## Final pass (round 19)
+
+Everything filmed again on one build, the whole suite, the docs. Three things were fixed
+on the way.
+
+**Fixed:**
+- **Grain on every surface near a creature** (the glow film's frame 380): the shortcut for
+  "more than 16 lights" made the unshadowed sum itself random. See "The grain on every
+  surface" under Sampled lighting.
+- **Grain in the films' dim and derelict corridors:** independent light picks don't average
+  out in 12 samples. The picks are now spread evenly. See "The grain in the films".
+- **The window film's framing:** the creature no longer shows at the right edge before it
+  shows in the glass. See Viewports.
+
+**The films** (all 1080p, 30 frames a second, each with `audio.wav`, `audio_events.csv` and
+`audio_wave.png`; every one rendered after the last code change of this round, so the tail
+fix, the longer stride, the scanner and the lighting are in all of them):
+
+| Film | Frames | What happens when (this render) |
+|---|---|---|
+| `walkthrough_a`, `walkthrough_b` | 3000 + 3105 | start to exit; ducks under the pipes at 71 s and 140 s |
+| `fire` | 180 | six shots |
+| `crawl` (seed 42) | 448 | floor, wall, ceiling overhead |
+| `hunt` | 424 | stalk 0.2 s, hit at 5.5 and 6.0 s, threat 8.6 s at 2.9 m, coil 10.1 s, leap 10.7 s, caught 11.1 s |
+| `fight` | 343 | hits at 6.2, 6.6, 7.1 and 7.6 s; it dies on the wall at 5.8 m, still by 9.6 s |
+| `approach` (seed 42) | 428 | charge 5.0 s, threat 8.7 s at 3.2 m on the left wall, coil 10.2 s, leap 10.8 s, caught 11.3 s |
+| `threat` | 412 | threat 8.2 s at 3.1 m on the ceiling, coil 9.7 s, leap 10.3 s, caught 10.7 s |
+| `scanner` | 558 | first blip at 4 s, one in view from 10.8 s at 20 m, it charges at 15.5 s; 10 pings |
+| `window` | 525 | the creature in the far viewport's glass (seen at 11.5 s and 13 s), the turn from 13.4 s, face to face at 16 s |
+| `climb`, `climb_overlay` | 824 each | floor, wall, edge, ceiling, wall, floor; the same frames with the drawing |
+| `glow_capped`, `glow_all`, `glow_sampled` | 420 each | as the window renders (`--temporal`): three lit, every light tested, sampled |
+| `shots` | stills | RT on/off pairs |
+
+Frames looked at this round: walk 600, 1500, 2140 and 2900 of the first half and 1200 of
+the second; hunt 285; fight 250; approach 290; threat 270; scanner 520; window 345, 390
+and 480; climb 620; climb overlay 400; fire 64; crawl 300; glow 250 and 380.
+
+**The suite** (run in parts, each command under 10 minutes; 90 tests, all passed):
+
+| Part | Tests | Time |
+|---|---|---|
+| `unit` | 4 | 8 s |
+| `smoke` | 22 | 23 s |
+| `film` | 48 | 98 min of test time (see below) |
+| `bench` | 10 | 11 min |
+| `encounters` | 2 | 1 min |
+| `package` | 2 | 12 s |
+| `weave` | 2 | 72 s |
+| **Total** | **90** | **about 112 min** |
+
+- The film part was 39 minutes in total the round before. This time 23 minutes of it were
+  one check (`film_glow_all_check`, normally about 70 s) that stalled after its command
+  passed the 10-minute limit and was moved to the background, and the two walk checks,
+  run in the background beside the next render, took 14 and 10.5 minutes instead of 3.5.
+  The renders were slower too: each walk half took 8-8.5 minutes (5-6 before), on a
+  laptop that was running slow that afternoon (see the note under the cost table).
+- The film groups that fitted one command each: `film_walkthrough_a_run`; its check (with
+  `-FS`); the same two for `_b`; fire, crawl and hunt; fight, window, approach and threat;
+  climb; climb overlay and scanner. The three glow films with the shots and maps did not
+  fit: split the glow films off.
+- The 37 `diag` tests are not part of the suite. Of them this round ran: `light_cost_*`
+  and `light_cost_all_*` (14), `glow_ref_all`, `glow_ref_sampled`, `film_grain_*` (3) and
+  `window_preview`.
+
+**Numbers on this build:**
+- **Frame time** (whole walk, 1080p, 1 sample + history): no creatures 5.78 ms median,
+  7.68 ms 95th (lit 6.2, dim 6.2, dark 5.5, derelict 5.2 ms). Ten creatures hunting the
+  walk: 5.88 / 7.78 ms, 6.68 ms with one in view. The original three: 6.08 / 7.94 ms.
+  Creature AI and lights on the CPU: 0.61 ms median, 0.95 ms 95th, 14.6 ms worst.
+- **Encounters** (30 runs of 10 minutes): first seen 74.3 s mean, 57.8 s median; first
+  within 25 m 30.6 s; first death 81.1 s; 6.1 deaths per 10 min; killed before seeing one
+  in 2 of 30 runs. The same as after round 17: nothing this round touched the AI.
+- **`level_tests`, `audio_tests`, `maze_tests`:** pass.
+
+**Not checked:**
+- Nobody on the AI side has listened to the sound or watched the window. The films are
+  judged from single frames, the logs and the event lists, not played back.
+- The window's noise with the new picks while the camera moves: `glow_sampled` (as the
+  window renders) was looked at in frames 250 and 380 only.
+- What is left of the grain at frame 380 (the creature's own body and the wall beside it)
+  is still more than with every light tested.
+- The `light_cost_picks1_*` and `_picks4_*` tests and `glow_plain` were not run again.
+- The download built by GitHub: `package_check` here unpacks and runs this build's zip,
+  but the GitHub build only happens on the push.
 
 ## The walking weave (fixed after round 10)
 
@@ -783,7 +945,9 @@ Bash on this machine only runs `cmake` and `ctest`, so the game runs inside ctes
   - `unit`: no GPU.
   - `smoke`: short captures, including one with the D3D12 debug layer on.
   - `film`: 1080p captures for the video. The walk is split into `film_walkthrough_a` and `_b`; run them one at a time, because a single ctest command is cut off after 10 minutes.
-  - `bench`: the timing run over the whole walk.
+  - `bench`: the timing runs over the whole walk, with and without creatures.
+  - `encounters`: how long until a creature is met (no GPU). `package`: the download,
+    unpacked and run. `weave`: the straight-walk capture.
   - `diag`: diagnostics, not part of the normal runs.
 
 ## Blender asset kit (milestone 3)

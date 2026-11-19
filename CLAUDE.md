@@ -9,9 +9,15 @@ milestone status are in `docs/PLAN.md`; update that table when a milestone lands
   - `cmake -S . -B build -G "Visual Studio 17 2022" -A x64`
   - `cmake --build build --config Release`
   - `ctest --test-dir build -C Release --output-on-failure` (labels `unit`, `smoke`, `film`,
-    `bench`, `package`). Run `-L film` in pieces: each walk half takes about 5 minutes to
-    render and 3.5 to check. `-R <name>_check` also reruns its `_run` unless you add
-    `-FS <name>`.
+    `bench`, `package`). Run `-L film` in pieces: each walk half takes 5-8 minutes to
+    render and 3.5 or more to check, so render (`-R film_walkthrough_a_run`) and check
+    (`-R film_walkthrough_a_check -FS film_walkthrough_a`) in separate commands.
+    `-R <name>_check` also reruns its `_run` unless you add `-FS <name>`. Don't let a
+    command reach the 10-minute limit: once moved to the background, a check that takes
+    70 s stalled for 23 minutes (round 19). The grouping that fitted is in PLAN.md
+    ("Final pass").
+  - Frame times drift on this laptop (the same shader read 6.1 ms, then 7.2 ms an hour
+    later). Compare two shaders only from runs made one after the other.
 - The download: `.github/workflows/build.yml` builds on GitHub (no GPU there: unit tests
   plus the CPU-only `--check` of the zip), and publishes a release on every push to master.
   `ctest -L package` does the same unpack-and-run check here, plus a ray-traced capture.
@@ -113,8 +119,15 @@ milestone status are in `docs/PLAN.md`; update that table when a milestone lands
   store id 16000000 and a point 500 m out, so the window reprojects them as infinitely far.
 - Lights are sampled (round 18, PLAN.md "Sampled lighting"): each pixel weighs every light in
   range without rays, picks two in proportion to what they add, shadow-tests only those, and
-  scales the exact unshadowed sum by the share that got through. Extra lights cost ~0.013 ms
-  each at 1080p (`ctest -L diag -R light_cost`), so there are no caps on creature glow.
+  scales the exact unshadowed sum by the share that got through. Extra lights cost ~0.06 ms
+  each at 1080p up to 32, less past that (`ctest -L diag -R light_cost`), so there are no
+  caps on creature glow. Keep that sum exact: never weigh a random subset of the lights
+  while a point has 32 or fewer in range (a subset made every surface grainy with ten
+  creatures, fixed in round 19), and re-run `light_cost_120` after touching those loops.
+  The two picks are spread evenly along the lights' weights from a per-pixel number that
+  moves on each frame (`gPickU`), not drawn independently: independent picks left the
+  films' dim corridors grainy at 12 samples. Check film grain with `ctest -R film_grain`
+  (diag: one walk frame, sampled against every light tested), not only converged references.
   `--lights all` keeps the old every-light shading (and its caps) for comparisons; keep
   `directLight` working. Weights must never be 0 for a light that adds something, or it
   silently vanishes. Noise shows in the window, not in converged captures: compare with

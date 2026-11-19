@@ -2131,7 +2131,9 @@ bool Game::setupWindowScene() {
 }
 
 float Game::windowU(float s) const {
-    const float ceil = crawlPath_.profile().ceilingU();
+    // (it keeps to the far side of the ceiling, 0.4 m off the middle: see setWindowTime)
+    const float mid = crawlPath_.profile().ceilingU();
+    const float ceil = mid + (window_.uWall > mid ? 0.4f : -0.4f);
     return ceil + (window_.uWall - ceil) * smooth01(window_.sDesc, window_.sDesc + 2.2f, s);
 }
 
@@ -2172,7 +2174,12 @@ void Game::setWindowTime(float t) {
     const Vec3 lookOut1 = w.v1 + w.O * 3.0f + Vec3{0, 0.25f, 0} + w.A * (0.15f * std::sin(t * 0.4f));
     // the far viewport, looked at steeply: it mirrors the opposite wall far down the
     // corridor (where the creature comes from), and glass reflects more at that angle
-    const Vec3 lookOut2 = w.v2 + w.O * 0.4f + Vec3{0, 0.05f, 0};
+    // (round 19: aimed 0.56 m short of the far viewport's middle, 38 degrees off straight
+    // out instead of 49. The frame's right edge was 97 degrees round, a little past
+    // straight down the corridor, so the creature waiting on the ceiling there showed
+    // directly at the edge before it showed in the glass. Now the edge is at 86 degrees
+    // and the creature, on the far side of the ceiling, is at 93 or more.)
+    const Vec3 lookOut2 = w.v2 - w.A * 0.56f + w.O * 0.4f + Vec3{0, 0.05f, 0};
     yawPitch(pos + w.A * 6.0f + Vec3{0, -0.1f, 0}, yaw, pitch);  // down the corridor
     yawPitch(lookOut1, y2, p2);
     float k = smooth01(1.6f, 4.4f, t);
